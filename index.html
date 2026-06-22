@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Offline UHF RFID Race Timer</title>
+    <link rel="manifest" href="manifest.json">
+    <style>
+        :root {
+            --bg-primary: #121212;
+            --bg-secondary: #1a1a1a;
+            --accent: #00ff00;
+            --accent-dim: #008800;
+            --text: #e0e0e0;
+            --text-dim: #888888;
+            --error: #ff0055;
+            --data: #00ffff;
+            --timer-color: #ffcc00;
+        }
+        body { font-family: 'Courier New', monospace; background: var(--bg-primary); color: var(--text); margin: 0; padding: 20px; box-sizing: border-box; }
+        h1, h2, h3 { color: var(--accent); margin-top: 0; }
+
+        /* Navigation Tabs */
+        .nav-tabs { display: flex; border-bottom: 2px solid var(--bg-secondary); margin-bottom: 20px; gap: 5px; }
+        .tab-btn { background: var(--bg-secondary); color: var(--text-dim); border: none; padding: 12px 24px; cursor: pointer; font-family: inherit; font-size: 14px; font-weight: bold; border-radius: 5px 5px 0 0; }
+        .tab-btn.active { background: var(--accent); color: var(--bg-primary); }
+        .tab-content { display: none; background: var(--bg-secondary); padding: 20px; border-radius: 5px; border: 1px solid #222; }
+        .tab-content.active { display: block; }
+
+        /* Layout Grids */
+        .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; font-weight: bold; margin-bottom: 5px; color: var(--accent); }
+        input[type="text"], input[type="number"] { background: #111; color: var(--accent); border: 1px solid #333; padding: 12px; font-family: inherit; font-size: 16px; width: 100%; box-sizing: border-box; border-radius: 4px; }
+
+        /* Buttons */
+        button.btn { background: #222; color: var(--accent); border: 2px solid var(--accent); padding: 12px 24px; font-size: 14px; font-weight: bold; cursor: pointer; border-radius: 4px; text-transform: uppercase; }
+        button.btn:hover { background: var(--accent); color: var(--bg-primary); }
+        button.btn:disabled { border-color: #333; color: #333; cursor: not-allowed; background: transparent; }
+        button.btn-danger { color: var(--error); border-color: var(--error); }
+        button.btn-danger:hover { background: var(--error); color: white; }
+
+        /* Dashboards & Controls */
+        .control-panel { display: flex; gap: 15px; margin-bottom: 20px; background: #222; padding: 15px; border-radius: 4px; align-items: center; flex-wrap: wrap; }
+        .status-badge { padding: 8px 15px; border-radius: 4px; font-weight: bold; background: #333; font-size: 12px; }
+        .status-connected { background: rgba(0, 255, 0, 0.2); color: var(--accent); border: 1px solid var(--accent); }
+        .status-disconnected { background: rgba(255, 0, 85, 0.2); color: var(--error); border: 1px solid var(--error); }
+
+        /* Big Race Clock Display */
+        .clock-display { font-size: 32px; font-weight: bold; color: var(--timer-color); background: #000; padding: 5px 15px; border-radius: 4px; border: 1px solid #333; font-family: monospace; min-width: 160px; text-align: center; }
+
+        /* Data Tables & Logs */
+        .table-wrapper { max-height: 400px; overflow-y: auto; border: 1px solid #333; background: #111; }
+        table { width: 100%; border-collapse: collapse; text-align: left; }
+        th, td { padding: 10px; border-bottom: 1px solid #222; font-size: 13px; }
+        th { background: #1a1a1a; color: var(--accent); sticky: top; }
+        .console-log { height: 250px; background: #0b0b0b; border: 1px solid #222; padding: 15px; overflow-y: auto; white-space: pre-wrap; font-size: 12px; line-height: 1.5; color: var(--data); margin-top: 15px; }
+
+        .flash-indicator { display: inline-block; width: 15px; height: 15px; border-radius: 50%; background: #333; margin-left: 10px; vertical-align: middle; }
+        .flash-active { animation: pulse 0.15s ease-out; }
+        @keyframes pulse {
+            0% { background: var(--data); transform: scale(1.3); }
+            100% { background: #333; transform: scale(1); }
+        }
+    </style>
+</head>
+<body>
+
+    <h2>UHF RFID Offline Timing Deck</h2>
+
+    <div class="nav-tabs">
+        <button id="raceTabBtn" class="tab-btn active" onclick="switchTab('race-tab', this)">RACE OPERATION</button>
+        <button id="mappingTabBtn" class="tab-btn" onclick="switchTab('mapping-tab', this)">CHIP-TO-BIB KIOSK</button>
+    </div>
+
+    <div id="race-tab" class="tab-content active">
+        <div class="control-panel">
+            <button id="connectBtn" class="btn" onclick="connectBle()">Connect Reader</button>
+            <button id="startRaceBtn" class="btn" style="color: gold; border-color: gold;" onclick="toggleRaceState()" disabled>Start Clock</button>
+            <button id="exportBtn" class="btn" onclick="exportProcessedCsv()">Export Standings CSV</button>
+            <button id="resetRaceBtn" class="btn btn-danger" onclick="resetRaceData()">Reset Race Data</button>
+
+            <div id="raceClock" class="clock-display">00:00:00</div>
+
+            <div id="bleStatus" class="status-badge status-disconnected">READER OFFLINE</div>
+            <div id="raceStatus" class="status-badge">CLOCK STOPPED</div>
+            <div>
+                <span>Pings: <strong id="pingCounter">0</strong></span>
+                <div id="pingFlash" class="flash-indicator"></div>
+            </div>
+        </div>
+
+        <div class="grid-2">
+            <div>
+                <h3>Live Feed Log</h3>
+                <div id="consoleLog" class="console-log">System initialized. Awaiting hardware connection...</div>
+            </div>
+            <div>
+                <h3>Raw Ingestion Metrics</h3>
+                <div class="table-wrapper">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Timestamp</th>
+                                <th>Chip Hex</th>
+                                <th>RSSI</th>
+                            </tr>
+                        </thead>
+                        <tbody id="liveTableBody">
+                            <tr><td colspan="3" style="text-align:center; color:var(--text-dim);">No active reads in buffer</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="mapping-tab" class="tab-content">
+        <div class="control-panel" style="background: #2b1a0a; border: 1px solid #ff8800; color: #ffaa55;">
+            <strong>KIOSK MODE ARMED:</strong> Waving a physical race tag near the antenna will instantly auto-populate the form fields below.
+        </div>
+        <div class="grid-2">
+            <div>
+                <h3>Add Assignment</h3>
+                <form id="mappingForm" onsubmit="saveMapping(event)">
+                    <div class="form-group">
+                        <label for="formChipHex" style="color: var(--data);">Scanned Chip HEX Code</label>
+                        <input type="text" id="formChipHex" required placeholder="Wave a tag or paste code..." autocomplete="off">
+                    </div>
+                    <div class="form-group">
+                        <label for="formBibNum">Assign Bib Number</label>
+                        <input type="number" id="formBibNum" required placeholder="e.g., 104" autocomplete="off">
+                    </div>
+                    <button type="submit" class="btn">Register Mapping</button>
+                </form>
+                <hr style="border:0; border-top:1px solid #333; margin: 30px 0;">
+                <button class="btn btn-danger" onclick="clearAllDataConfirm()">Nuke Entire Database</button>
+            </div>
+            <div>
+                <h3>Active Registry Table</h3>
+                <div class="table-wrapper">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Chip HEX</th>
+                                <th>Bib #</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="mappingTableBody">
+                            </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
+<script>
+    // System Constants
+    const SERVICE_UUID = "0000ffe1-0000-1000-8000-00805f9b34fb";
+    const NOTIFY_UUID  = "0000ffe2-0000-1000-8000-00805f9b34fb";
+    const DB_NAME = "RaceTimingDB";
+    const DB_VERSION = 1;
+
+    // Execution States
+    let db = null;
+    let bleDevice = null;
+    let isTrackingRace = false;
+    let totalReadsCount = 0;
+    let memoryWriteQueue = [];
+
+    // Stopwatch Variables
+    let raceStartTime = null;
+    let clockIntervalId = null;
+
+    // Initialize Database on Window Load
+    window.addEventListener('DOMContentLoaded', () => {
+        initIndexedDB();
+        setupQueueDaemon();
+
+        if ("serviceWorker" in navigator) {
+            navigator.serviceWorker.register("./service-worker.js")
+                .then(() => console.log("Service Worker Registered"));
+        }
+    });
+
+    // --- ARCHITECTURAL LAYER 1: INDEXEDDB CONTROLLER ---
+    function initIndexedDB() {
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
+
+        request.onupgradeneeded = (event) => {
+            const upgradedDb = event.target.result;
+            if (!upgradedDb.objectStoreNames.contains('chip_map')) {
+                upgradedDb.createObjectStore('chip_map', { keyPath: 'chip_hex' });
+            }
+            if (!upgradedDb.objectStoreNames.contains('race_reads')) {
+                upgradedDb.createObjectStore('race_reads', { keyPath: 'id', autoIncrement: true });
+            }
+        };
+
+        request.onsuccess = (event) => {
+            db = event.target.result;
+            sysLog("Database layer established successfully.");
+            renderMappingTable();
+            checkForExistingRaceState();
+        };
+
+        request.onerror = (event) => {
+            sysLog("CRITICAL ENGINE ERROR: IndexedDB failed to mount: " + event.target.error, true);
+        };
+    }
+
+    // --- ARCHITECTURAL LAYER 2: ASYNC WRITE DAEMON ---
+    function setupQueueDaemon() {
+        setInterval(() => {
+            if (memoryWriteQueue.length === 0 || !db) return;
+
+            const workingBatch = [...memoryWriteQueue];
+            memoryWriteQueue = [];
+
+            const transaction = db.transaction(['race_reads'], 'readwrite');
+            const store = transaction.objectStore('race_reads');
+
+            workingBatch.forEach(record => {
+                store.add(record);
+                updateLiveUI(record);
+            });
+
+            transaction.onerror = (e) => {
+                sysLog("Disk write failure: " + e.target.error, true);
+                memoryWriteQueue = [...workingBatch, ...memoryWriteQueue];
+            };
+        }, 250);
+    }
+
+    // --- ARCHITECTURAL LAYER 3: HARDWARE PRODUCER & PROTOCOL PARSER ---
+    async function connectBle() {
+        const statusBadge = document.getElementById('bleStatus');
+        sysLog("Requesting local Bluetooth authorization...");
+
+        try {
+            bleDevice = await navigator.bluetooth.requestDevice({
+                filters: [{ services: [SERVICE_UUID] }],
+                optionalServices: [SERVICE_UUID]
+            });
+
+            sysLog(`Hardware paired: ${bleDevice.name || 'UHF Antenna'}`);
+
+            bleDevice.addEventListener('gattserverdisconnected', () => {
+                statusBadge.textContent = "READER OFFLINE";
+                statusBadge.className = "status-badge status-disconnected";
+                document.getElementById('startRaceBtn').disabled = true;
+                sysLog("CRITICAL: Physical reader dropped link state.", true);
+            });
+
+            const server = await bleDevice.gatt.connect();
+            const service = await server.getPrimaryService(SERVICE_UUID);
+            const characteristic = await service.getCharacteristic(NOTIFY_UUID);
+
+            await characteristic.startNotifications();
+            characteristic.addEventListener('characteristicvaluechanged', handleRawTelemetry);
+
+            statusBadge.textContent = "READER ONLINE";
+            statusBadge.className = "status-badge status-connected";
+            document.getElementById('startRaceBtn').disabled = false;
+            sysLog("Pipeline armed. Hardware state ready.");
+
+        } catch (error) {
+            sysLog(`Hardware Exception: ${error.message}`, true);
+        }
+    }
+
+    function handleRawTelemetry(event) {
+        const value = event.target.value;
+        const timestamp = new Date().toISOString();
+
+        const hexCodes = [];
+        for (let i = 0; i < value.byteLength; i++) {
+            hexCodes.push(value.getUint8(i).toString(16).padStart(2, '0').toUpperCase());
+        }
+        const fullHex = hexCodes.join('');
+
+        if (fullHex.length < 6) return;
+
+        // Extract genuine RSSI and strip the two trailing protocol bytes
+        let rawRssiByte = value.getUint8(value.byteLength - 2);
+        let processedRssi = rawRssiByte > 127 ? rawRssiByte - 256 : -rawRssiByte;
+        const cleanChipHex = fullHex.substring(0, fullHex.length - 4);
+
+        // Kiosk Intercept Mode
+        const isKioskModeActive = document.getElementById('mapping-tab').classList.contains('active');
+        if (isKioskModeActive) {
+            document.getElementById('formChipHex').value = cleanChipHex;
+            document.getElementById('formBibNum').focus();
+
+            const flash = document.getElementById('pingFlash');
+            flash.className = 'flash-indicator flash-active';
+            setTimeout(() => flash.className = 'flash-indicator', 100);
+            return;
+        }
+
+        // Drop reads completely if race clock isn't actively ticking
+        if (!isTrackingRace || !raceStartTime) return;
+
+        totalReadsCount++;
+        document.getElementById('pingCounter').textContent = totalReadsCount;
+        const flash = document.getElementById('pingFlash');
+        flash.className = 'flash-indicator flash-active';
+        setTimeout(() => flash.className = 'flash-indicator', 100);
+
+        memoryWriteQueue.push({
+            tag_hex: cleanChipHex,
+            rssi: processedRssi,
+            timestamp: timestamp
+        });
+    }
+
+    // --- ARCHITECTURAL LAYER 4: CONSUMER COMPILER (DEDUP & ELAPSED TIME CSV) ---
+    function getAllDataFromStore(storeName) {
+        return new Promise((resolve, reject) => {
+            if (!db) return reject("Database unmounted.");
+            const tx = db.transaction([storeName], 'readonly');
+            const store = tx.objectStore(storeName);
+            const req = store.getAll();
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error);
+        });
+    }
+
+    function msToElapsedString(ms) {
+        if (ms < 0) ms = 0;
+        let totalSeconds = Math.floor(ms / 1000);
+        let hours = Math.floor(totalSeconds / 3600);
+        let minutes = Math.floor((totalSeconds % 3600) / 60);
+        let seconds = totalSeconds % 60;
+
+        return [
+            hours.toString().padStart(2, '0'),
+            minutes.toString().padStart(2, '0'),
+            seconds.toString().padStart(2, '0')
+        ].join(':');
+    }
+
+    async function exportProcessedCsv() {
+        sysLog("Compiling diagnostic standing datasets...");
+        if (!raceStartTime) {
+            alert("Export Error: Cannot compute standings because no Start Time has been recorded yet.");
+            return;
+        }
+
+        try {
+            const [rawReads, mappings] = await Promise.all([
+                getAllDataFromStore('race_reads'),
+                getAllDataFromStore('chip_map')
+            ]);
+
+            if (rawReads.length === 0) {
+                alert("Export cancelled: Current race history buffer is empty.");
+                return;
+            }
+
+            const chipToBibMap = {};
+            mappings.forEach(m => chipToBibMap[m.chip_hex.toUpperCase().trim()] = m.bib_num);
+
+            rawReads.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+            const cleanFinishers = [];
+            const processedChips = {};
+            const startMs = new Date(raceStartTime).getTime();
+
+            for (const read of rawReads) {
+                const currentHex = read.tag_hex.toUpperCase().trim();
+                const currentMs = new Date(read.timestamp).getTime();
+                const elapsedMs = currentMs - startMs;
+
+                if (!(currentHex in processedChips)) {
+                    processedChips[currentHex] = {
+                        firstSeenMs: currentMs,
+                        deadlineMs: currentMs + 10000
+                    };
+
+                    const lookedUpBib = chipToBibMap[currentHex] || 0;
+
+                    cleanFinishers.push({
+                        elapsedTimeStr: msToElapsedString(elapsedMs),
+                        bib: lookedUpBib
+                    });
+                }
+            }
+
+            let csvContent = "data:text/csv;charset=utf-8,Elapsed Time,Bib Number\n";
+            cleanFinishers.forEach(f => {
+                csvContent += `"${f.elapsedTimeStr}","${f.bib}"\n`;
+            });
+
+            const encodedUri = encodeURI(csvContent);
+            const downloadAnchor = document.createElement("a");
+            downloadAnchor.setAttribute("href", encodedUri);
+            downloadAnchor.setAttribute("download", `race_results_${new Date().toISOString().split('T')[0]}.csv`);
+            document.body.appendChild(downloadAnchor);
+            downloadAnchor.click();
+            document.body.removeChild(downloadAnchor);
+            sysLog(`CSV compilation complete. Extracted ${cleanFinishers.length} clean unique finishers.`);
+
+        } catch (err) {
+            sysLog("Processing Pipeline Failure: " + err, true);
+        }
+    }
+
+    // --- UI/UX STOPWATCH & WORKFLOW ENGINE ---
+    function toggleRaceState() {
+        const btn = document.getElementById('startRaceBtn');
+        const badge = document.getElementById('raceStatus');
+
+        if (!isTrackingRace) {
+            isTrackingRace = true;
+
+            if (!raceStartTime) {
+                raceStartTime = new Date().toISOString();
+                localStorage.setItem('raceStartTime', raceStartTime);
+            }
+
+            btn.textContent = "STOP CLOCK";
+            btn.style.color = "var(--error)";
+            btn.style.borderColor = "var(--error)";
+            badge.textContent = "CLOCK RUNNING";
+            badge.style.background = "rgba(0,255,0,0.1)";
+            sysLog(`=== RACE CLOCK INITIATED AT ${new Date(raceStartTime).toLocaleTimeString()} ===`);
+
+            startVisualClock();
+        } else {
+            isTrackingRace = false;
+            btn.textContent = "START CLOCK";
+            btn.style.color = "gold";
+            btn.style.borderColor = "gold";
+            badge.textContent = "CLOCK STOPPED";
+            badge.style.background = "#333";
+            sysLog("=== RACE CLOCK PAUSED ===");
+
+            stopVisualClock();
+        }
+    }
+
+    function startVisualClock() {
+        if (clockIntervalId) clearInterval(clockIntervalId);
+        const clockEl = document.getElementById('raceClock');
+        const startMs = new Date(raceStartTime).getTime();
+
+        clockIntervalId = setInterval(() => {
+            clockEl.textContent = msToElapsedString(Date.now() - startMs);
+        }, 200);
+    }
+
+    function stopVisualClock() {
+        if (clockIntervalId) {
+            clearInterval(clockIntervalId);
+            clockIntervalId = null;
+        }
+    }
+
+    function checkForExistingRaceState() {
+        const backupTime = localStorage.getItem('raceStartTime');
+        if (backupTime) {
+            raceStartTime = backupTime;
+            sysLog(`Recovered running race state: ${new Date(raceStartTime).toLocaleTimeString()}`);
+            const diff = Date.now() - new Date(raceStartTime).getTime();
+            document.getElementById('raceClock').textContent = msToElapsedString(diff);
+        }
+    }
+
+    // --- RACE PURGE CONTROL (TARGETED) ---
+    function resetRaceData() {
+        const confirmation = prompt("Type 'RESET' to wipe current race timings and zero out the clock.\n\nThis will NOT touch your bib mappings database or drop the scanner connection.");
+        if (confirmation !== 'RESET') {
+            sysLog("Race data wipe cancelled.");
+            return;
+        }
+
+        stopVisualClock();
+        localStorage.removeItem('raceStartTime');
+        raceStartTime = null;
+        isTrackingRace = false;
+
+        if (!db) return;
+        const tx = db.transaction(['race_reads'], 'readwrite');
+        tx.objectStore('race_reads').clear();
+
+        tx.oncomplete = () => {
+            totalReadsCount = 0;
+            document.getElementById('pingCounter').textContent = '0';
+            document.getElementById('raceClock').textContent = '00:00:00';
+
+            const startBtn = document.getElementById('startRaceBtn');
+            startBtn.textContent = "START CLOCK";
+            startBtn.style.color = "gold";
+            startBtn.style.borderColor = "gold";
+
+            const badge = document.getElementById('raceStatus');
+            badge.textContent = "CLOCK STOPPED";
+            badge.style.background = "#333";
+
+            document.getElementById('liveTableBody').innerHTML = `<tr><td colspan="3" style="text-align:center; color:var(--text-dim);">No active reads in buffer</td></tr>`;
+            sysLog("=== CURRENT RACE DATA RESET COMPLETED ===");
+        };
+    }
+
+    function saveMapping(event) {
+        event.preventDefault();
+        if (!db) return;
+
+        const chipHex = document.getElementById('formChipHex').value.trim().toUpperCase();
+        const bibNum = parseInt(document.getElementById('formBibNum').value.trim(), 10);
+
+        const transaction = db.transaction(['chip_map'], 'readwrite');
+        const store = transaction.objectStore('chip_map');
+
+        store.put({ chip_hex: chipHex, bib_num: bibNum });
+
+        transaction.oncomplete = () => {
+            document.getElementById('mappingForm').reset();
+            document.getElementById('formChipHex').focus();
+            renderMappingTable();
+        };
+    }
+
+    async function renderMappingTable() {
+        try {
+            const list = await getAllDataFromStore('chip_map');
+            const tbody = document.getElementById('mappingTableBody');
+            if (list.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="3" style="text-align:center; color:var(--text-dim);">No hardware links mapped yet</td></tr>`;
+                return;
+            }
+            tbody.innerHTML = list.map(item => `
+                <tr>
+                    <td>${item.chip_hex}</td>
+                    <td style="color:var(--accent); font-weight:bold;">${item.bib_num}</td>
+                    <td><button class="btn btn-danger" style="padding:4px 8px; font-size:10px;" onclick="deleteMap('${item.chip_hex}')">Remove</button></td>
+                </tr>
+            `).join('');
+        } catch (e) { console.error(e); }
+    }
+
+    function deleteMap(key) {
+        if (!db) return;
+        const tx = db.transaction(['chip_map'], 'readwrite');
+        tx.objectStore('chip_map').delete(key);
+        tx.oncomplete = () => renderMappingTable();
+    }
+
+    function updateLiveUI(record) {
+        const tbody = document.getElementById('liveTableBody');
+        if (totalReadsCount === 1) tbody.innerHTML = '';
+
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td>${new Date(record.timestamp).toLocaleTimeString()}</td>
+            <td style="color:var(--data);">${record.tag_hex}</td>
+            <td>${record.rssi} dBm</td>
+        `;
+        tbody.insertBefore(row, tbody.firstChild);
+        if (tbody.children.length > 50) tbody.removeChild(tbody.lastChild);
+    }
+
+    function switchTab(tabId, el) {
+        document.querySelectorAll('.tab-content').forEach(t => t.className = 'tab-content');
+        document.querySelectorAll('.tab-btn').forEach(b => b.className = 'tab-btn');
+        document.getElementById(tabId).className = 'tab-content active';
+        el.className = 'tab-btn active';
+    }
+
+    function sysLog(msg, isError = false) {
+        const logger = document.getElementById('consoleLog');
+        const ts = new Date().toLocaleTimeString();
+        const color = isError ? 'var(--error)' : 'var(--data)';
+        logger.innerHTML += `\n<span style="color:${color}">[${ts}] ${msg}</span>`;
+        logger.scrollTop = logger.scrollHeight;
+    }
+
+    function clearAllDataConfirm() {
+        if (confirm("Are you absolutely sure you want to completely erase BOTH tables? This wipes your chip layout registry AND all raw race logs!")) {
+            stopVisualClock();
+            localStorage.removeItem('raceStartTime');
+            raceStartTime = null;
+            isTrackingRace = false;
+
+            const tx = db.transaction(['chip_map', 'race_reads'], 'readwrite');
+            tx.objectStore('chip_map').clear();
+            tx.objectStore('race_reads').clear();
+            tx.oncomplete = () => {
+                totalReadsCount = 0;
+                document.getElementById('pingCounter').textContent = '0';
+                document.getElementById('raceClock').textContent = '00:00:00';
+                document.getElementById('startRaceBtn').textContent = "START CLOCK";
+                document.getElementById('startRaceBtn').style.color = "gold";
+                document.getElementById('startRaceBtn').style.borderColor = "gold";
+                document.getElementById('raceStatus').textContent = "CLOCK STOPPED";
+                document.getElementById('raceStatus').style.background = "#333";
+                document.getElementById('liveTableBody').innerHTML = `<tr><td colspan="3" style="text-align:center; color:var(--text-dim);">No active reads in buffer</td></tr>`;
+                renderMappingTable();
+                sysLog("DATABASE COLD PURGE COMPLETE.");
+            };
+        }
+    }
+</script>
+</body>
+</html>
