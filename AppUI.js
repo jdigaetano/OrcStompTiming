@@ -9,6 +9,7 @@ class AppUI {
 
         this.clockInterval = null;
         this.totalReads = 0;
+        this.uniqueTags = new Set();
 
         this.setupBindings();
 
@@ -41,6 +42,12 @@ class AppUI {
         this.engine.onRecordPersisted = (record) => {
             this.totalReads++;
             document.getElementById('pingCounter').textContent = this.totalReads;
+
+            if (!this.uniqueTags.has(record.tag_hex)) {
+                this.uniqueTags.add(record.tag_hex);
+                document.getElementById('uniqueCounter').textContent = this.uniqueTags.size;
+            }
+
             this.flashPing();
             this.addLiveTableRow(record);
         };

@@ -37,9 +37,6 @@ class BleDriver {
         }
     }
 
-    /**
-     * Internal: Performs the actual GATT handshake
-     */
     async establishConnection() {
         try {
             if (!this.device) throw new Error("No device reference");
@@ -57,74 +54,70 @@ class BleDriver {
             this.isAutoReconnecting = false;
             return true;
         } catch (error) {
-            // Rethrow so the caller (connect or retry loop) handles it
             throw error;
         }
     }
 
-    /**
-     * Event Listener: Triggered when the physical link drops
-     */
     handleDisconnect() {
         if (this.intentionalDisconnect) return;
 
         this.updateStatus("LINK LOST - RECONNECTING...", false);
         this.isAutoReconnecting = true;
 
-        // Clear references
         this.server = null;
         this.characteristic = null;
 
-        // Start the reconnect loop with a 2s delay to allow hardware to reset
         console.log("BleDriver: Link lost. Initiating recovery loop in 2s...");
         setTimeout(() => this.attemptReconnect(), 2000);
     }
 
-    /**
-     * Reconnect Loop: Retries until success or intentional disconnect
-     */
     async attemptReconnect() {
-        if (!this.isAutoReconnecting || this.intentionalDisconnect) {
-            console.log("BleDriver: Reconnect loop aborted.");
-            return;
-        }
+        if (!this.isAutoReconnecting || this.intentionalDisconnect) return;
 
         try {
-            console.log("BleDriver: Attempting GATT reconnection...");
             this.updateStatus("RECONNECTING...", false);
             await this.establishConnection();
-            console.log("BleDriver: Reconnection successful.");
         } catch (error) {
-            console.warn("BleDriver: Reconnect failed:", error.message);
-            this.updateStatus("RECONNECT RETRYING...", false);
             if (this.isAutoReconnecting) {
                 setTimeout(() => this.attemptReconnect(), 4000);
             }
         }
     }
 
+    /**
+     * Protocol Parser: Handles multi-tag frames
+     */
     parseFrame(event) {
         const value = event.target.value;
         if (value.byteLength < 6) return;
 
-        // Extract Hex
+        // 1. Convert entire buffer to Hex
         const hexCodes = [];
         for (let i = 0; i < value.byteLength; i++) {
             hexCodes.push(value.getUint8(i).toString(16).padStart(2, '0').toUpperCase());
         }
         const fullHex = hexCodes.join('');
 
-        // Protocol: [Tag...][RSSI][Check1][Check2]
-        // Extract RSSI (second to last byte)
-        let rawRssiByte = value.getUint8(value.byteLength - 2);
-        let processedRssi = rawRssiByte > 127 ? rawRssiByte - 256 : -rawRssiByte;
+        // 2. Split buffer into individual tag chunks using the "CCFFFF" prefix as a delimiter
+        // We use a positive lookahead regex to keep the "CCFFFF" at the start of each part
+        const chunks = fullHex.split(/(?=CCFFFF)/);
 
-        // Strip trailing 4 chars (RSSI + 2 protocol bytes)
-        const cleanChipHex = fullHex.substring(0, fullHex.length - 4);
+        chunks.forEach(chunk => {
+            if (chunk.length < 10) return; // Ignore fragments
 
-        if (this.onTagRead) {
-            this.onTagRead(cleanChipHex, processedRssi);
-        }
+            // Extract RSSI (2nd to last byte of THIS chunk)
+            // chunk is hex, so 2 chars per byte. RSSI is at length - 4 to length - 2
+            const rssiHex = chunk.substring(chunk.length - 4, chunk.length - 2);
+            const rawRssiByte = parseInt(rssiHex, 16);
+            const processedRssi = rawRssiByte > 127 ? rawRssiByte - 256 : -rawRssiByte;
+
+            // Strip trailing 4 chars (RSSI + Checksum) from THIS chunk
+            const cleanChipHex = chunk.substring(0, chunk.length - 4);
+
+            if (this.onTagRead && cleanChipHex.startsWith("CCFFFF")) {
+                this.onTagRead(cleanChipHex, processedRssi);
+            }
+        });
     }
 
     updateStatus(msg, connected) {

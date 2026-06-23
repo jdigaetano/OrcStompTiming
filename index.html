@@ -70,7 +70,10 @@
 
     <div style="display: flex; justify-content: space-between; align-items: baseline;">
         <h2>UHF RFID Offline Timing Deck</h2>
-        <span style="color: var(--text-dim); font-size: 10px;">v1.2.1-refactor</span>
+        <div>
+            <button id="mockToggleBtn" class="btn" style="padding: 4px 8px; font-size: 10px; border-color: #555; color: #555;" onclick="app.toggleMockMode()">ENABLE MOCK MODE</button>
+            <span style="color: var(--text-dim); font-size: 10px; margin-left: 10px;">v1.3-mock</span>
+        </div>
     </div>
 
     <div class="nav-tabs">
@@ -91,6 +94,7 @@
             <div id="raceStatus" class="status-badge">CLOCK STOPPED</div>
             <div>
                 <span>Pings: <strong id="pingCounter">0</strong></span>
+                <span style="margin-left: 15px;">Unique: <strong id="uniqueCounter">0</strong></span>
                 <div id="pingFlash" class="flash-indicator"></div>
             </div>
         </div>
@@ -175,17 +179,68 @@
 
     <!-- Architectural Scripts -->
     <script src="BleDriver.js"></script>
+    <script src="MockBleDriver.js"></script>
     <script src="TimingEngine.js"></script>
     <script src="AppUI.js"></script>
 
     <script>
         // Orchestration Layer
-        const driver = new BleDriver();
+        let driver = new BleDriver();
         const engine = new TimingEngine();
-        const app = new AppUI(engine, driver);
+        let app = new AppUI(engine, driver);
 
         // Global bridge for inline HTML onclicks
         app.connectBle = () => driver.connect().catch(e => console.error(e));
+
+        app.toggleMockMode = () => {
+            const btn = document.getElementById('mockToggleBtn');
+            const isMocking = btn.textContent.includes('DISABLE');
+
+            if (!isMocking) {
+                // Switch to Mock
+                if (driver.isConnected) driver.disconnect();
+                driver = new MockBleDriver();
+                btn.textContent = "DISABLE MOCK MODE";
+                btn.style.borderColor = "var(--data)";
+                btn.style.color = "var(--data)";
+                app.sysLog("SYSTEM: Switched to Mock Driver.");
+            } else {
+                // Switch to Real
+                driver = new BleDriver();
+                btn.textContent = "ENABLE MOCK MODE";
+                btn.style.borderColor = "#555";
+                btn.style.color = "#555";
+                app.sysLog("SYSTEM: Switched to Real Bluetooth Driver.");
+            }
+
+            // Re-bind the new driver to the UI and Engine
+            app.driver = driver;
+            app.setupBindings();
+
+            // If in mock mode, add a "Simulate Runner" button to the console for testing
+            if (!isMocking) {
+                app.sysLog("MOCK: Click [Simulate] in log to fire test data.");
+                const log = document.getElementById('consoleLog');
+                log.innerHTML += `<br><button class="btn" style="padding:4px; font-size:10px;" onclick="app.runMockScenario()">Simulate 10s Window (Peak RSSI Test)</button>`;
+            }
+        };
+
+        app.runMockScenario = async () => {
+            if (!(driver instanceof MockBleDriver)) return;
+            app.sysLog("MOCK: Starting 10s Peak RSSI scenario for Tag E200AAAA...");
+
+            const scenario = [
+                { tag: 'E200AAAA', rssi: -70, delay: 0 },    // First read (far)
+                { tag: 'E200AAAA', rssi: -50, delay: 2000 }, // Getting closer
+                { tag: 'E200AAAA', rssi: -30, delay: 3000 }, // PEAK (on the line)
+                { tag: 'E200AAAA', rssi: -55, delay: 2000 }, // Moving away
+                { tag: 'E200AAAA', rssi: -90, delay: 5000 }, // Outside 10s window (should be ignored)
+            ];
+
+            await driver.playSequence(scenario);
+            app.sysLog("MOCK: Sequence complete.");
+        };
+
         app.switchTab = (id, el) => {
             document.querySelectorAll('.tab-content').forEach(t => t.className = 'tab-content');
             document.querySelectorAll('.tab-btn').forEach(b => b.className = 'tab-btn');
@@ -231,26 +286,44 @@
             const chipToBib = {};
             maps.forEach(m => chipToBib[m.chip_hex] = m.bib_num);
 
-            // Simple Deduplication: First seen
+            // Group reads by Tag
+            const groups = {};
+            reads.forEach(r => {
+                if (!groups[r.tag_hex]) groups[r.tag_hex] = [];
+                groups[r.tag_hex].push(r);
+            });
+
             const results = {};
             const startMs = new Date(engine.raceStartTime).getTime();
 
-            reads.sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
+            Object.keys(groups).forEach(hex => {
+                const tagReads = groups[hex].sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
 
-            reads.forEach(r => {
-                if (!results[r.tag_hex]) {
-                    const elapsed = new Date(r.timestamp).getTime() - startMs;
-                    results[r.tag_hex] = {
-                        bib: chipToBib[r.tag_hex] || "UNKNOWN",
-                        time: app.formatTime(elapsed)
-                    };
+                // Peak RSSI within 10s Window Logic
+                const firstRead = tagReads[0];
+                const firstMs = new Date(firstRead.timestamp).getTime();
+                const windowLimitMs = firstMs + 10000;
+
+                let bestRead = firstRead;
+                for (const r of tagReads) {
+                    const currentMs = new Date(r.timestamp).getTime();
+                    if (currentMs > windowLimitMs) break; // Window closed
+                    if (r.rssi > bestRead.rssi) {
+                        bestRead = r; // Stronger signal found
+                    }
                 }
+
+                const elapsed = new Date(bestRead.timestamp).getTime() - startMs;
+                results[hex] = {
+                    bib: chipToBib[hex] || "UNKNOWN",
+                    time: app.formatTime(elapsed)
+                };
             });
 
             let csv = "Bib,Time,Chip\n";
             Object.keys(results).forEach(hex => {
                 const res = results[hex];
-                csv += `${res.bib},${res.time},${hex}\n`;
+                csv += `"${res.bib}","${res.time}","${hex}"\n`;
             });
 
             const blob = new Blob([csv], { type: 'text/csv' });
