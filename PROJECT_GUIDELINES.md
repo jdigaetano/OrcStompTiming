@@ -1,0 +1,22 @@
+# Orc Stomp Timing: Architectural Guidelines
+
+## 1. High-Speed Ingestion (Producer-Consumer)
+- **Producer (BleDriver)**: Must remain lightweight. Its only job is to capture raw Bluetooth frames, parse the protocol (Tag ID + RSSI), and push to a high-speed memory queue. Zero blocking logic.
+- **Consumer (TimingEngine)**: Processes the queue in batches. 
+    - Dedupes reads to prevent DB bloat.
+    - Persists unique reads to `IndexedDB`.
+    - Updates UI through a thin event/callback layer.
+
+## 2. Data Persistence & Lifecycle
+- **Race Data**: Store in `race_reads`. Target for the "Reset Race" function.
+- **Kiosk Registry**: Store in `chip_map`. Must **NOT** be cleared by race resets. This is the source of truth for Bib assignments.
+- **Session Recovery**: UI state (Clock, Tracking Status) must sync to `localStorage` to survive accidental page refreshes.
+
+## 3. Hardware Management
+- **BleDriver**: Must implement an auto-reconnect loop. If the GATT server drops, it should attempt to reconnect silently without user intervention if the race is active.
+- **Mocking**: The interface must be abstract enough to allow a `MockBleDriver` to inject fake reads for testing/regression.
+
+## 4. Processing
+- **Deduplication**: Initial "Ingestion Dedup" (don't save the same chip 100 times in 1 second).
+- **Export Logic**: Final "Result Dedup" (take the first seen time for the official standing). 
+- **Time Sync**: All timestamps must be high-precision ISO or MS from the epoch.
