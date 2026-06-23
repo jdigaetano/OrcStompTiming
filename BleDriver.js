@@ -85,39 +85,75 @@ class BleDriver {
     }
 
     /**
-     * Protocol Parser: Handles multi-tag frames
+     * Protocol Parser: Handles multi-tag frames with Checksum validation
      */
     parseFrame(event) {
         const value = event.target.value;
         if (value.byteLength < 6) return;
 
-        // 1. Convert entire buffer to Hex
-        const hexCodes = [];
+        // 1. Convert to Byte Array for processing
+        const bytes = [];
         for (let i = 0; i < value.byteLength; i++) {
-            hexCodes.push(value.getUint8(i).toString(16).padStart(2, '0').toUpperCase());
+            bytes.push(value.getUint8(i));
         }
-        const fullHex = hexCodes.join('');
 
-        // 2. Split buffer into individual tag chunks using the "CCFFFF" prefix as a delimiter
-        // We use a positive lookahead regex to keep the "CCFFFF" at the start of each part
-        const chunks = fullHex.split(/(?=CCFFFF)/);
+        // 2. Identify and Process individual frames
+        // We look for 0xCC 0xFF 0xFF as the start sequence
+        let i = 0;
+        while (i < bytes.length) {
+            if (bytes[i] === 0xCC && bytes[i+1] === 0xFF && bytes[i+2] === 0xFF) {
+                // Potential frame start.
+                // We need to find the end of this frame (next CCFFFF or end of buffer)
+                let nextHeader = -1;
+                for (let j = i + 3; j < bytes.length - 2; j++) {
+                    if (bytes[j] === 0xCC && bytes[j+1] === 0xFF && bytes[j+2] === 0xFF) {
+                        nextHeader = j;
+                        break;
+                    }
+                }
 
-        chunks.forEach(chunk => {
-            if (chunk.length < 10) return; // Ignore fragments
+                const frameEnd = (nextHeader !== -1) ? nextHeader : bytes.length;
+                const frameBytes = bytes.slice(i, frameEnd);
 
-            // Extract RSSI (2nd to last byte of THIS chunk)
-            // chunk is hex, so 2 chars per byte. RSSI is at length - 4 to length - 2
-            const rssiHex = chunk.substring(chunk.length - 4, chunk.length - 2);
-            const rawRssiByte = parseInt(rssiHex, 16);
-            const processedRssi = rawRssiByte > 127 ? rawRssiByte - 256 : -rawRssiByte;
+                if (frameBytes.length >= 6) {
+                    this.processValidFrame(frameBytes);
+                }
 
-            // Strip trailing 4 chars (RSSI + Checksum) from THIS chunk
-            const cleanChipHex = chunk.substring(0, chunk.length - 4);
-
-            if (this.onTagRead && cleanChipHex.startsWith("CCFFFF")) {
-                this.onTagRead(cleanChipHex, processedRssi);
+                i = frameEnd;
+            } else {
+                i++;
             }
-        });
+        }
+    }
+
+    processValidFrame(frame) {
+        // 1. Validate XOR Checksum
+        // Rule: XOR of all bytes in a valid frame should be 0 (if checksum is at the end)
+        let checksum = 0;
+        for (let b of frame) {
+            checksum ^= b;
+        }
+
+        if (checksum !== 0) {
+            console.warn("BleDriver: Discarding corrupted frame (Checksum mismatch)", this.bytesToHex(frame));
+            return;
+        }
+
+        // 2. Extract Data
+        // Format: [Header 3][Data...][RSSI 1][Checksum 1]
+        const rssiRaw = frame[frame.length - 2];
+        const processedRssi = rssiRaw > 127 ? rssiRaw - 256 : -rssiRaw;
+
+        const tagBytes = frame.slice(0, frame.length - 2);
+        const tagHex = this.bytesToHex(tagBytes);
+
+        if (this.onTagRead) {
+            this.onTagRead(tagHex, processedRssi);
+        }
+    }
+
+    bytesToHex(bytes) {
+        return bytes.map(b => b.toString(16).padStart(2, '0').toUpperCase()).join('');
     }
 
     updateStatus(msg, connected) {
