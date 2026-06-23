@@ -75,24 +75,30 @@ class BleDriver {
         this.server = null;
         this.characteristic = null;
 
-        // Start the reconnect loop
-        this.attemptReconnect();
+        // Start the reconnect loop with a 2s delay to allow hardware to reset
+        console.log("BleDriver: Link lost. Initiating recovery loop in 2s...");
+        setTimeout(() => this.attemptReconnect(), 2000);
     }
 
     /**
      * Reconnect Loop: Retries until success or intentional disconnect
      */
     async attemptReconnect() {
-        if (!this.isAutoReconnecting || this.intentionalDisconnect) return;
+        if (!this.isAutoReconnecting || this.intentionalDisconnect) {
+            console.log("BleDriver: Reconnect loop aborted.");
+            return;
+        }
 
         try {
             console.log("BleDriver: Attempting GATT reconnection...");
+            this.updateStatus("RECONNECTING...", false);
             await this.establishConnection();
             console.log("BleDriver: Reconnection successful.");
         } catch (error) {
-            console.warn("BleDriver: Reconnect failed, retrying in 3s...", error.message);
+            console.warn("BleDriver: Reconnect failed:", error.message);
+            this.updateStatus("RECONNECT RETRYING...", false);
             if (this.isAutoReconnecting) {
-                setTimeout(() => this.attemptReconnect(), 3000);
+                setTimeout(() => this.attemptReconnect(), 4000);
             }
         }
     }

@@ -26,6 +26,7 @@ class AppUI {
 
         this.driver.onStatusChange = (msg, connected) => {
             this.updateBleBadge(msg, connected);
+            this.sysLog(`BLE: ${msg}`, !connected && msg.includes('FAIL'));
         };
 
         // Link Engine to UI

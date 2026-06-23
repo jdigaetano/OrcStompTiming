@@ -1,10 +1,13 @@
-const CACHE_NAME = 'orc-stomp-v1.1';
+const CACHE_NAME = 'orc-stomp-v1.2'; // BUMP VERSION
 const ASSETS = [
   './',
   './index.html',
   './manifest.json',
   './icons/launchericon-192x192.png',
-  './icons/launchericon-512x512.png'
+  './icons/launchericon-512x512.png',
+  './BleDriver.js',
+  './TimingEngine.js',
+  './AppUI.js'
 ];
 
 // Install Event - Caching Assets
