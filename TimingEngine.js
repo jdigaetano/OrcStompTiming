@@ -14,30 +14,43 @@ class TimingEngine {
         this.writeQueue = [];
         this.onRecordPersisted = null; // Callback for UI updates
 
-        this.initDB();
-        this.restoreSession();
-        this.startDaemon();
+        // Expose a promise that resolves when DB is ready
+        this.ready = this.initDB().then(() => {
+            this.restoreSession();
+            this.startDaemon();
+            console.log("TimingEngine: Database and Daemon ready.");
+        });
     }
 
     async initDB() {
         return new Promise((resolve, reject) => {
             const request = indexedDB.open(this.DB_NAME, this.DB_VERSION);
+
             request.onupgradeneeded = (e) => {
                 const db = e.target.result;
-                if (!db.objectStoreNames.contains('chip_map')) db.createObjectStore('chip_map', { keyPath: 'chip_hex' });
-                if (!db.objectStoreNames.contains('race_reads')) db.createObjectStore('race_reads', { keyPath: 'id', autoIncrement: true });
+                console.log("TimingEngine: Upgrading/Initializing Database...");
+                if (!db.objectStoreNames.contains('chip_map')) {
+                    db.createObjectStore('chip_map', { keyPath: 'chip_hex' });
+                }
+                if (!db.objectStoreNames.contains('race_reads')) {
+                    db.createObjectStore('race_reads', { keyPath: 'id', autoIncrement: true });
+                }
             };
+
             request.onsuccess = (e) => {
                 this.db = e.target.result;
                 resolve();
             };
-            request.onerror = (e) => reject(e.target.error);
+
+            request.onerror = (e) => {
+                console.error("TimingEngine: IndexedDB Error", e.target.error);
+                reject(e.target.error);
+            };
         });
     }
 
     restoreSession() {
         this.raceStartTime = localStorage.getItem('raceStartTime');
-        // tracking status will be handled by AppUI state recovery
     }
 
     handleIncomingTag(tagHex, rssi) {
@@ -67,16 +80,20 @@ class TimingEngine {
                 store.add(record);
                 if (this.onRecordPersisted) this.onRecordPersisted(record);
             });
+
+            tx.onerror = (e) => console.error("TimingEngine: Batch write failed", e.target.error);
         }, 250);
     }
 
     async saveMapping(chipHex, bibNum) {
+        if (!this.db) throw new Error("Database not initialized");
         const tx = this.db.transaction(['chip_map'], 'readwrite');
-        tx.objectStore('chip_map').put({ chip_hex: chipHex.toUpperCase(), bib_num: bibNum });
+        tx.objectStore('chip_map').put({ chip_hex: chipHex.toUpperCase().trim(), bib_num: bibNum });
         return new Promise(r => tx.oncomplete = r);
     }
 
     async getMappings() {
+        if (!this.db) return [];
         return this.getAllFromStore('chip_map');
     }
 
@@ -85,11 +102,13 @@ class TimingEngine {
         tx.objectStore('race_reads').clear();
         localStorage.removeItem('raceStartTime');
         this.raceStartTime = null;
+        this.isTrackingRace = false;
         return new Promise(r => tx.oncomplete = r);
     }
 
     async clearAllData() {
         await this.clearRaceData();
+        if (!this.db) return;
         const tx = this.db.transaction(['chip_map'], 'readwrite');
         tx.objectStore('chip_map').clear();
         return new Promise(r => tx.oncomplete = r);
@@ -97,6 +116,7 @@ class TimingEngine {
 
     getAllFromStore(storeName) {
         return new Promise((resolve, reject) => {
+            if (!this.db) return resolve([]);
             const tx = this.db.transaction([storeName], 'readonly');
             const req = tx.objectStore(storeName).getAll();
             req.onsuccess = () => resolve(req.result);

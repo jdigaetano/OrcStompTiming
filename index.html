@@ -70,7 +70,7 @@
 
     <div style="display: flex; justify-content: space-between; align-items: baseline;">
         <h2>UHF RFID Offline Timing Deck</h2>
-        <span style="color: var(--text-dim); font-size: 10px;">v1.2-refactor</span>
+        <span style="color: var(--text-dim); font-size: 10px;">v1.2.1-refactor</span>
     </div>
 
     <div class="nav-tabs">
@@ -138,6 +138,20 @@
                     </div>
                     <button type="submit" class="btn">Register Mapping</button>
                 </form>
+                <hr style="border:0; border-top:1px solid #333; margin: 30px 0;">
+
+                <h3>Inventory Management</h3>
+                <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+                    <button class="btn" onclick="app.exportChipMap()" style="font-size: 11px; padding: 8px;">Export Map CSV</button>
+                    <button class="btn" onclick="document.getElementById('importMapFile').click()" style="font-size: 11px; padding: 8px;">Import Map CSV</button>
+                    <input type="file" id="importMapFile" style="display:none" accept=".csv" onchange="app.importChipMap(event)">
+                </div>
+                <div style="margin-bottom: 20px;">
+                    <button class="btn btn-danger" onclick="document.getElementById('reconcileFile').click()" style="font-size: 11px; padding: 8px; width: 100%;">Reconcile & Purge Used Chips</button>
+                    <input type="file" id="reconcileFile" style="display:none" accept=".csv" onchange="app.reconcileChips(event)">
+                    <p style="font-size: 10px; color: var(--text-dim); margin-top: 5px;">Upload a results CSV to remove those chips from inventory.</p>
+                </div>
+
                 <hr style="border:0; border-top:1px solid #333; margin: 30px 0;">
                 <button class="btn btn-danger" onclick="app.nukeDatabase()">Nuke Entire Database</button>
             </div>
@@ -245,6 +259,71 @@
             a.setAttribute('href', url);
             a.setAttribute('download', `race-export-${Date.now()}.csv`);
             a.click();
+        };
+
+        app.exportChipMap = async () => {
+            const maps = await engine.getMappings();
+            if (!maps.length) return alert("No mappings to export");
+            let csv = "ChipHex,BibNum\n";
+            maps.forEach(m => csv += `${m.chip_hex},${m.bib_num}\n`);
+            const blob = new Blob([csv], { type: 'text/csv' });
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.setAttribute('href', url);
+            a.setAttribute('download', `chip-map-export.csv`);
+            a.click();
+        };
+
+        app.importChipMap = async (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+            const text = await file.text();
+            const lines = text.split('\n');
+            let count = 0;
+            for (let line of lines) {
+                const [hex, bib] = line.split(',').map(s => s.trim());
+                if (hex && bib && hex.toUpperCase() !== "CHIPHEX") {
+                    await engine.saveMapping(hex, parseInt(bib, 10));
+                    count++;
+                }
+            }
+            alert(`Imported ${count} mappings.`);
+            app.renderMappingTable();
+        };
+
+        app.reconcileChips = async (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+            const text = await file.text();
+            const lines = text.split('\n').filter(l => l.trim() !== '');
+            if (lines.length < 2) return alert("File is empty or missing data.");
+
+            const headers = lines[0].split(',').map(h => h.trim().toUpperCase());
+            const chipColIndex = headers.indexOf("CHIP");
+
+            if (chipColIndex === -1) {
+                return alert("Invalid CSV: Could not find a 'Chip' column header.");
+            }
+
+            const chipsToRemove = new Set();
+            for (let i = 1; i < lines.length; i++) {
+                const parts = lines[i].split(',');
+                if (parts[chipColIndex]) {
+                    const chip = parts[chipColIndex].trim().toUpperCase();
+                    if (chip) chipsToRemove.add(chip);
+                }
+            }
+
+            if (chipsToRemove.size === 0) return alert("No chip data found in file.");
+
+            if (confirm(`Remove ${chipsToRemove.size} used chips from the active registry?`)) {
+                for (let hex of chipsToRemove) {
+                    await app.deleteMapping(hex);
+                }
+                alert("Reconciliation complete.");
+                app.renderMappingTable();
+            }
+            event.target.value = ''; // Reset file input
         };
 
         // Register PWA Service Worker
