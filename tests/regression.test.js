@@ -29,7 +29,7 @@ describe('OrcStomp Regression Suite', () => {
                 getUint8: (i) => {
                     const bytes = [
                         0xCC, 0xFF, 0xFF, 0x01, 0x02, 0x32, 0xFD, // Tag 1 (RSSI 50 [32], CS: CC^FF^FF^01^02^32 = FD)
-                        0xCC, 0xFF, 0xFF, 0x04, 0x05, 0x2D, 0xE7  // Tag 2 (RSSI 45 [2D], CS: CC^FF^FF^04^05^2D = E7)
+                        0xCC, 0xFF, 0xFF, 0x04, 0x05, 0x2D, 0xE0  // Tag 2 (RSSI 45 [2D], CS: CC^FF^FF^04^05^2D = E0)
                     ];
                     return bytes[i];
                 }
