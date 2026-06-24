@@ -125,10 +125,14 @@ class BleDriver {
         const fullHex = this.bytesToHex(frame);
         if (this.onRawFrame) this.onRawFrame(fullHex);
 
-        // Validate SUM Checksum: ADR to INFO
+        // Validate Two's Complement SUM Checksum (Section 2.3)
+        // Rule: The sum of all bytes in the frame (including CHKSUM) mod 256 should be 0.
         let sum = 0;
-        for (let j = 1; j < frame.length - 1; j++) sum += frame[j];
-        if ((sum & 0xFF) !== frame[frame.length - 1]) return;
+        for (let b of frame) sum += b;
+        if ((sum & 0xFF) !== 0) {
+            console.warn(`BleDriver: Checksum mismatch! Sum & 0xFF = ${(sum & 0xFF).toString(16)}`, fullHex);
+            return;
+        }
 
         // Tag Read Detection (CID1 = 0x20)
         if (frame[3] === 0x20) {
@@ -136,12 +140,13 @@ class BleDriver {
             const processedRssi = rssiRaw > 127 ? rssiRaw - 256 : -rssiRaw;
 
             // Extract EPC from INFO section
-            // Based on your discovery, INFO starts with EPC_LEN
             const epcLen = frame[6];
             const tagBytes = frame.slice(6, 6 + epcLen);
             const tagHex = this.bytesToHex(tagBytes);
 
-            if (this.onTagRead) this.onTagRead(tagHex, processedRssi);
+            if (this.onTagRead) {
+                this.onTagRead(tagHex, processedRssi);
+            }
         }
     }
 
@@ -153,17 +158,17 @@ class BleDriver {
         if (!this.writeCharacteristic) throw new Error("No write pipe available");
 
         let finalHex = hex;
-        // Auto-calculate SUM for any command starting with 7C that doesn't have a checksum
-        // A valid 7C command with checksum will have an odd number of bytes if we exclude SOI
-        // but let's just check if it's missing based on the LENGTH byte.
+        // Auto-calculate Two's Complement SUM for partial 7C commands
         const bytes = hex.match(/.{1,2}/g).map(b => parseInt(b, 16));
         const declaredLen = bytes[5] || 0;
 
+        // If length is correct but checksum byte is missing (frame length = 6 + declaredLen)
         if (hex.startsWith('7C') && bytes.length === (6 + declaredLen)) {
             let sum = 0;
-            for (let j = 1; j < bytes.length; j++) sum += bytes[j];
-            finalHex += (sum & 0xFF).toString(16).padStart(2, '0').toUpperCase();
-            console.log("BleDriver: Auto-signed command:", finalHex);
+            for (let b of bytes) sum += b;
+            const checksum = ((~sum) + 1) & 0xFF;
+            finalHex += checksum.toString(16).padStart(2, '0').toUpperCase();
+            console.log("BleDriver: Auto-signed (Two's Complement):", finalHex);
         }
 
         const data = new Uint8Array(finalHex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
