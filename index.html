@@ -72,7 +72,7 @@
         <h2>UHF RFID Offline Timing Deck</h2>
         <div>
             <button id="mockToggleBtn" class="btn" style="padding: 4px 8px; font-size: 10px; border-color: #555; color: #555;" onclick="app.toggleMockMode()">ENABLE MOCK MODE</button>
-            <span style="color: var(--text-dim); font-size: 10px; margin-left: 10px;">v1.3.7-control</span>
+            <span style="color: var(--text-dim); font-size: 10px; margin-left: 10px;">v1.3.8-writer</span>
         </div>
     </div>
 
@@ -190,14 +190,25 @@
                     <p style="color: var(--text-dim); text-align: center;">Awaiting scan...</p>
                 </div>
 
+                <div style="margin-top: 20px; border-top: 1px solid #333; padding-top: 15px;">
+                    <h3>Pro Tag Writer</h3>
+                    <div class="form-group" style="background: #200; padding: 10px; border-radius: 5px; border: 1px solid var(--error);">
+                        <label style="font-size: 12px; color: white;">New Bib Number to Encode</label>
+                        <div style="display: flex; gap: 10px;">
+                            <input type="number" id="writeBibNum" placeholder="e.g. 101" style="border-color: var(--error);">
+                            <button class="btn btn-danger" onclick="app.writeBibToTag()">Burn to Tag</button>
+                        </div>
+                        <p style="font-size: 10px; color: #aaa; margin-top: 5px;">WARNING: Ensure only ONE tag is near the antenna when writing.</p>
+                    </div>
+                </div>
+
                 <div style="margin-top: 20px;">
                     <h3>Pro Diagnostics</h3>
                     <div style="display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 15px;">
-                        <button class="btn" onclick="app.sendManualCommand(false, '7CFFFF01020101')" style="font-size: 10px;">Stop Active Mode</button>
-                        <button class="btn" onclick="app.sendManualCommand(false, '7CFFFF01020100')" style="font-size: 10px;">Start Active Mode</button>
+                        <button class="btn" onclick="app.setReaderMode('01')" style="font-size: 10px; color: var(--accent); border-color: var(--accent);">Switch to ANSWER MODE</button>
+                        <button class="btn" onclick="app.setReaderMode('00')" style="font-size: 10px;">Switch to ACTIVE MODE</button>
                         <button class="btn" onclick="app.sendManualCommand(false, '7CFFFF823200')" style="font-size: 10px;">Get Version</button>
                         <button class="btn" onclick="app.sendManualCommand(false, '7CFFFF123203020006')" style="font-size: 10px;">Read TID (Bank 2)</button>
-                        <button class="btn" onclick="app.sendManualCommand(false, '7CFFFF123203030006')" style="font-size: 10px;">Read User (Bank 3)</button>
                     </div>
 
                     <h3>Manual Command (Advanced)</h3>

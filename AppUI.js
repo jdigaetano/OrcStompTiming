@@ -222,6 +222,38 @@ class AppUI {
         if (history.children.length > 20) history.removeChild(history.lastChild);
     }
 
+    async setReaderMode(mode) {
+        // mode 01 = Answer Mode (Quiet), 00 = Active Mode (Beeping)
+        const cmd = `7CFFFF010201${mode}`;
+        try {
+            await this.driver.sendRawHex(cmd);
+            this.sysLog(`SYSTEM: Switched to ${mode === '01' ? 'ANSWER' : 'ACTIVE'} mode.`);
+        } catch (e) {
+            this.sysLog(`MODE ERROR: ${e.message}`, true);
+        }
+    }
+
+    async writeBibToTag() {
+        const bib = document.getElementById('writeBibNum').value;
+        if (!bib) return alert("Enter a Bib number first");
+
+        const bibHex = parseInt(bib, 10).toString(16).padStart(4, '0').toUpperCase();
+
+        // Command 12 31 (Write Memory)
+        // Bank 01 (EPC), Start 02 (Skip PC), Len 01 (1 word / 2 bytes)
+        // Full Info: [Bank][Start][Len][Data] = 01 02 01 + [bibHex]
+        const info = `010201${bibHex}`;
+        const lenByte = (info.length / 2).toString(16).padStart(2, '0');
+        const cmd = `7CFFFF1231${lenByte}${info}`;
+
+        try {
+            this.sysLog(`WRITER: Attempting to burn Bib ${bib} (${bibHex}) to tag...`);
+            await this.driver.sendRawHex(cmd);
+        } catch (e) {
+            this.sysLog(`WRITE ERROR: ${e.message}`, true);
+        }
+    }
+
     async renderMappingTable() {
         const list = await this.engine.getMappings();
         const tbody = document.getElementById('mappingTableBody');
