@@ -1,4 +1,4 @@
-const CACHE_NAME = 'orc-stomp-v1.2'; // BUMP VERSION
+const CACHE_NAME = 'orc-stomp-v1.3.2'; // BUMP VERSION
 const ASSETS = [
   './',
   './index.html',

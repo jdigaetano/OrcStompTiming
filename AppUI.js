@@ -38,14 +38,20 @@ class AppUI {
             this.sysLog(`BLE: ${msg}`, !connected && msg.includes('FAIL'));
         };
 
+        this.driver.onRawFrame = (hex) => {
+            this.updateInspector(hex);
+        };
+
         // Link Engine to UI
         this.engine.onRecordPersisted = (record) => {
             this.totalReads++;
-            document.getElementById('pingCounter').textContent = this.totalReads;
+            const pingEl = document.getElementById('pingCounter');
+            if (pingEl) pingEl.textContent = this.totalReads;
 
             if (!this.uniqueTags.has(record.tag_hex)) {
                 this.uniqueTags.add(record.tag_hex);
-                document.getElementById('uniqueCounter').textContent = this.uniqueTags.size;
+                const uniqueEl = document.getElementById('uniqueCounter');
+                if (uniqueEl) uniqueEl.textContent = this.uniqueTags.size;
             }
 
             this.flashPing();
@@ -58,8 +64,6 @@ class AppUI {
             this.sysLog(`Recovered race: ${new Date(this.engine.raceStartTime).toLocaleTimeString()}`);
             this.startVisualClock();
 
-            // Check if we were tracking (this is a simple recovery,
-            // you might want to store isTracking in localStorage too)
             const wasTracking = localStorage.getItem('isTrackingRace') === 'true';
             if (wasTracking) {
                 this.engine.isTrackingRace = true;
@@ -178,6 +182,44 @@ class AppUI {
         const color = isError ? 'var(--error)' : 'var(--data)';
         log.innerHTML += `\n<span style="color:${color}">[${new Date().toLocaleTimeString()}] ${msg}</span>`;
         log.scrollTop = log.scrollHeight;
+    }
+
+    updateInspector(hex) {
+        const detail = document.getElementById('inspectorDetail');
+        const history = document.getElementById('inspectorHistoryBody');
+        if (!detail || !history) return;
+
+        // Breakdown based on Section 2.2 Table 2.2-1
+        const header = hex.substring(0, 2);
+        const address = hex.substring(2, 6);
+        const cid1 = hex.substring(6, 8);
+        const cid2_rtn = hex.substring(8, 10);
+        const lenHex = hex.substring(10, 12);
+        const infoLen = parseInt(lenHex, 16);
+        const info = hex.substring(12, 12 + (infoLen * 2));
+        const checksum = hex.substring(hex.length - 2);
+
+        detail.innerHTML = `
+            <div style="font-family: monospace; font-size: 13px;">
+                <div style="margin-bottom: 5px; border-bottom: 1px solid #444; padding-bottom: 5px;">
+                    <span style="color: #555;">Raw:</span> <span style="word-break: break-all; font-size: 11px;">${hex}</span>
+                </div>
+                <div style="display: grid; grid-template-columns: 80px 1fr; gap: 2px;">
+                    <b style="color: #888;">Header:</b> <span>${header} <small>(${header === '7C' ? 'Cmd Echo' : 'Resp'})</small></span>
+                    <b style="color: #888;">Addr:</b> <span>${address}</span>
+                    <b style="color: var(--data);">CID1:</b> <span>${cid1}</span>
+                    <b style="color: var(--accent);">CID2/RTN:</b> <span>${cid2_rtn} <small>(${cid2_rtn === '00' ? 'SUCCESS' : ''})</small></span>
+                    <b style="color: orange;">Length:</b> <span>${lenHex} <small>(${infoLen} bytes)</small></span>
+                    <b style="color: var(--timer-color);">Info:</b> <span style="word-break: break-all; background: #1a1a1a; padding: 2px 4px;">${info}</span>
+                    <b style="color: #888;">Check:</b> <span>${checksum}</span>
+                </div>
+            </div>
+        `;
+
+        if (history.innerHTML.includes('No data captured')) history.innerHTML = '';
+        const row = `<tr><td style="white-space:nowrap">${new Date().toLocaleTimeString()}</td><td style="font-size:10px; word-break:break-all; font-family:monospace;">${hex}</td></tr>`;
+        history.insertAdjacentHTML('afterbegin', row);
+        if (history.children.length > 20) history.removeChild(history.lastChild);
     }
 
     async renderMappingTable() {

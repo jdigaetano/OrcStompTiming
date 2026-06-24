@@ -20,3 +20,12 @@
 - **Deduplication**: Initial "Ingestion Dedup" (don't save the same chip 100 times in 1 second).
 - **Export Logic**: Final "Result Dedup" (take the first seen time for the official standing). 
 - **Time Sync**: All timestamps must be high-precision ISO or MS from the epoch.
+
+## 5. AI Constraint: No Autonomous Edits
+- **STRICT RULE**: The AI assistant must **NEVER** write or modify files without first presenting the proposed change and receiving explicit verbal approval from the user. 
+- All changes must be verified against the regression suite after approval.
+
+## 6. Team Hierarchy & Discipline
+- **Architect/Senior Engineer**: The User. Owns the vision, direction, and engineering principles.
+- **Implementation/Junior Assistant**: The AI. Provides technical suggestions and handles code execution but must remain strictly disciplined.
+- **Operational Rule**: No "freestyling." The AI must not assume it knows better or change working code for the sake of "improvement" without a direct order. The Junior executes what the Senior approves.
