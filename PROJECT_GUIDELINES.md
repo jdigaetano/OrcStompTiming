@@ -29,3 +29,12 @@
 - **Architect/Senior Engineer**: The User. Owns the vision, direction, and engineering principles.
 - **Implementation/Junior Assistant**: The AI. Provides technical suggestions and handles code execution but must remain strictly disciplined.
 - **Operational Rule**: No "freestyling." The AI must not assume it knows better or change working code for the sake of "improvement" without a direct order. The Junior executes what the Senior approves.
+
+## 7. Testing Discipline (Red-Green-Refactor)
+- **Before any code change**: there must be a test exercising the affected behavior that currently fails (Red) for the reason the change is meant to fix. Write it first if one doesn't already exist.
+- **After any code change**: run the full test suite (`npm test`) and read the complete output — not just the test that motivated the change. Every newly-failing test must be triaged immediately into one of:
+    1. **Stale test** — it modeled outdated/incorrect behavior; confirm against the real source of truth (`PROTOCOL_SPEC.md`, hardware behavior) before rewriting it, don't just patch it to pass.
+    2. **Real regression** — the code change broke something; fix the code, not the test.
+    3. **Explicitly deferred** — flag it and get a decision from the User; never leave a new failure unexplained or silently ignored.
+- A test suite that exists but isn't run compulsively after every change provides zero protection — the discipline is in the *checking*, not just the tests' existence.
+- Exception: fixing a test that's wrong/stale isn't gated by the "before" half the same way, since the test itself isn't production code — but its staleness must still be justified (against the spec or real behavior), not just edited until green.
