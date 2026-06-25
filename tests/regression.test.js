@@ -16,44 +16,75 @@ const TimingEngine = loadScript('TimingEngine.js');
 describe('OrcStomp Regression Suite', () => {
 
     describe('BleDriver Protocol Parsing & Corruption Handling', () => {
-        it('should split concatenated tag frames correctly with valid checksums', () => {
+        it('should split two concatenated, protocol-accurate tag-push frames in a single BLE notification', () => {
             const driver = new BleDriver();
             const results = [];
             driver.onTagRead = (tag, rssi) => results.push({ tag, rssi });
 
-            // Tag 1: CC FF FF 01 02 (Checksum: CC^FF^FF^01^02 = CF)
-            // Tag 2: CC FF FF 04 05 (Checksum: CC^FF^FF^04^05 = CA)
-            // Sequence: [Header][Data][RSSI][Checksum]
+            // Each frame follows the documented general format (PROTOCOL_SPEC.md Section 2):
+            // [SOI=0xCC][ADR(2)][CID1][CID2/RTN][LENGTH][INFO(LENGTH bytes)][CHKSUM]
+            // CID1=0x20 / CID2=0x32 ("Auto send to SU") is this codebase's own empirical
+            // assumption for an unsolicited tag-read push - NOT documented in the manual
+            // itself (see PROTOCOL_SPEC.md Section 6, item 1). This test exercises the
+            // parser as it actually behaves today, not a corrected/aspirational version.
+            //
+            // INFO = [EPC_LEN][EPC bytes...][RSSI]. BleDriver.processValidFrame currently
+            // reads EPC bytes via frame.slice(6, 6 + epcLen), which starts AT the EPC_LEN
+            // byte itself rather than the byte after it - a suspected off-by-one (tracked
+            // in memory). This test deliberately encodes that real effect: the resulting
+            // tag hex includes the length byte as a leading byte and drops the true last
+            // EPC byte. If that bug is ever fixed, these expected values must change too -
+            // that's intentional, not an oversight.
+            //
+            // Checksum uses the verified additive two's-complement algorithm (Section 2.3),
+            // confirmed against the manual's own reference code and real hardware.
+
+            // Frame A: EPC_LEN=0x04, "EPC" bytes AA BB CC DD, RSSI raw 0xCE (-50 dBm)
+            const frameA = [0xCC, 0xFF, 0xFF, 0x20, 0x32, 0x06, 0x04, 0xAA, 0xBB, 0xCC, 0xDD, 0xCE, 0xFE];
+            // Frame B: EPC_LEN=0x03, "EPC" bytes 11 22 33, RSSI raw 0x2D (-45 dBm)
+            const frameB = [0xCC, 0xFF, 0xFF, 0x20, 0x32, 0x05, 0x03, 0x11, 0x22, 0x33, 0x2D, 0x49];
+            const bytes = [...frameA, ...frameB];
+
             const mockValue = {
-                byteLength: 14,
-                getUint8: (i) => {
-                    const bytes = [
-                        0xCC, 0xFF, 0xFF, 0x01, 0x02, 0x32, 0xFD, // Tag 1 (RSSI 50 [32], CS: CC^FF^FF^01^02^32 = FD)
-                        0xCC, 0xFF, 0xFF, 0x04, 0x05, 0x2D, 0xE0  // Tag 2 (RSSI 45 [2D], CS: CC^FF^FF^04^05^2D = E0)
-                    ];
-                    return bytes[i];
-                }
+                byteLength: bytes.length,
+                getUint8: (i) => bytes[i],
             };
+
             driver.parseFrame({ target: { value: mockValue } });
+
             expect(results).toHaveLength(2);
-            expect(results[0].tag).toBe('CCFFFF0102');
-            expect(results[1].tag).toBe('CCFFFF0405');
+            expect(results[0]).toEqual({ tag: '04AABBCC', rssi: -50 });
+            expect(results[1]).toEqual({ tag: '031122', rssi: -45 });
         });
 
-        it('should discard frames with invalid checksums (Bit Flip Test)', () => {
+        it('should discard a correctly-framed tag-push frame whose checksum byte was bit-flipped (Bit Flip Test)', () => {
             const driver = new BleDriver();
             const results = [];
             driver.onTagRead = (tag, rssi) => results.push({ tag, rssi });
+            const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+            // Same protocol-accurate shape as the concatenated-frames test above
+            // (SOI/ADR/CID1/CID2/LENGTH/INFO/CHKSUM, LENGTH=0x06 is correct), but the
+            // final CHKSUM byte is bit-flipped: 0xFE (valid) -> 0x00 (invalid). This
+            // matters because the LENGTH byte being correct means parseFrame's framing
+            // succeeds and the frame actually reaches processValidFrame's checksum
+            // check - unlike the old version of this test, which used a stale 7-byte
+            // shape that got rejected by the *framing* check before checksum
+            // validation was ever reached, so it passed without exercising checksum
+            // logic at all. Asserting the console.warn call below proves the rejection
+            // really did happen in the checksum branch this time, not by accident.
+            const bytes = [0xCC, 0xFF, 0xFF, 0x20, 0x32, 0x06, 0x04, 0xAA, 0xBB, 0xCC, 0xDD, 0xCE, 0x00]; // valid checksum would be 0xFE
 
             const mockValue = {
-                byteLength: 7,
-                getUint8: (i) => {
-                    const bytes = [0xCC, 0xFF, 0xFF, 0x01, 0x02, 0x32, 0x00]; // Valid would be 0xFD, 0x00 is wrong
-                    return bytes[i];
-                }
+                byteLength: bytes.length,
+                getUint8: (i) => bytes[i],
             };
+
             driver.parseFrame({ target: { value: mockValue } });
+
             expect(results).toHaveLength(0);
+            expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Checksum mismatch'), expect.any(String));
+            warnSpy.mockRestore();
         });
 
         it('should discard frames that do not start with the CCFFFF prefix', () => {

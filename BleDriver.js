@@ -18,10 +18,10 @@ class BleDriver {
     }
 
     async connect() {
-        try {
-            this.intentionalDisconnect = false;
-            this.updateStatus("Requesting Device...", false);
+        this.intentionalDisconnect = false;
+        this.updateStatus("Requesting Device...", false);
 
+        try {
             this.device = await navigator.bluetooth.requestDevice({
                 acceptAllDevices: true,
                 optionalServices: [
@@ -29,20 +29,43 @@ class BleDriver {
                     "0000ffe1-0000-1000-8000-00805f9b34fb"
                 ]
             });
-
-            this.device.addEventListener('gattserverdisconnected', () => this.handleDisconnect());
-            return await this.establishConnection();
         } catch (error) {
             this.updateStatus(`Discovery Error: ${error.message}`, false);
             throw error;
         }
+
+        this.device.addEventListener('gattserverdisconnected', () => this.handleDisconnect());
+        return await this.establishConnection();
+    }
+
+    // device.gatt.connect() is known to be flaky on Windows right after a scan
+    // (Chromium throws "Connection attempt failed." on attempt 1, then succeeds
+    // on retry). Retry with backoff, forcing a disconnect between attempts, before
+    // giving up. If it's STILL failing after this, the fault is below the page
+    // (a wedged OS Bluetooth radio) - no amount of JS retrying fixes that, so the
+    // final error tells the human what to do instead.
+    async connectGatt(maxAttempts = 4) {
+        let lastError;
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+            try {
+                this.updateStatus(`Connecting to GATT... (attempt ${attempt}/${maxAttempts})`, false);
+                return await this.device.gatt.connect();
+            } catch (error) {
+                lastError = error;
+                console.warn(`BleDriver: GATT connect attempt ${attempt}/${maxAttempts} failed:`, error.message);
+                if (attempt < maxAttempts) {
+                    try { this.device.gatt.disconnect(); } catch (e) { /* already disconnected, ignore */ }
+                    await new Promise(r => setTimeout(r, 500 * attempt));
+                }
+            }
+        }
+        throw new Error(`Still failing after ${maxAttempts} attempts (${lastError.message}) Try power-cycling the reader, or toggling Bluetooth off/on in Windows Settings.`);
     }
 
     async establishConnection() {
         try {
             if (!this.device) throw new Error("No device selected");
-            this.updateStatus("Connecting to GATT...", false);
-            this.server = await this.device.gatt.connect();
+            this.server = await this.connectGatt();
 
             this.updateStatus("Mapping characteristics...", false);
             const services = await this.server.getPrimaryServices();
