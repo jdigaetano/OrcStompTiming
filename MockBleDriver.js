@@ -48,10 +48,12 @@ class MockBleDriver {
         for (const item of sequence) {
             await new Promise(r => setTimeout(r, item.delay || 0));
 
-            // Re-emit raw frame for the inspector
+            // Re-emit raw frame for the inspector. Matches BleDriver's onRawFrame contract
+            // ({hex, checksumValid, tagDecode}) - tagDecode is null since these mock frames
+            // don't share BleDriver's real CID1=0x20 push-frame shape (KNOWN_ISSUES.md #4).
             if (this.onRawFrame) {
                 const frame = item.tag.startsWith('CCFFFF') ? item.tag : `CCFFFF010101${item.tag}${item.rssi}00`;
-                this.onRawFrame(frame);
+                this.onRawFrame({ hex: frame, checksumValid: true, tagDecode: null });
             }
 
             if (this.onTagRead) {

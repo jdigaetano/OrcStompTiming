@@ -38,8 +38,8 @@ class AppUI {
             this.sysLog(`BLE: ${msg}`, !connected && msg.includes('FAIL'));
         };
 
-        this.driver.onRawFrame = (hex) => {
-            this.updateInspector(hex);
+        this.driver.onRawFrame = (payload) => {
+            this.updateInspector(payload);
         };
 
         // Link Engine to UI
@@ -184,7 +184,7 @@ class AppUI {
         log.scrollTop = log.scrollHeight;
     }
 
-    updateInspector(hex) {
+    updateInspector({ hex, checksumValid, tagDecode }) {
         const detail = document.getElementById('inspectorDetail');
         const history = document.getElementById('inspectorHistoryBody');
         if (!detail || !history) return;
@@ -199,6 +199,33 @@ class AppUI {
         const info = hex.substring(12, 12 + (infoLen * 2));
         const checksum = hex.substring(hex.length - 2);
 
+        const checksumColor = checksumValid ? 'var(--accent)' : 'var(--error)';
+        const checksumLabel = checksumValid ? 'VALID' : 'INVALID';
+
+        // Separate, clearly-labeled breakdown for tag-read frames (CID1=0x20). CID1=0x20
+        // itself is still an undocumented, empirically reverse-engineered frame trigger
+        // (PROTOCOL_SPEC.md Section 6, item 1), but the INFO layout below - AN + a
+        // standard EPC Gen2 PC word + PC-length-derived EPC + RSSI - is now confirmed
+        // against 4 real scans (KNOWN_ISSUES.md #3, resolved 2026-06-28).
+        let tagPanel = '';
+        if (tagDecode) {
+            const anHex = tagDecode.an.toString(16).padStart(2, '0').toUpperCase();
+            const pcHex = tagDecode.pc.toString(16).padStart(4, '0').toUpperCase();
+            const rssiRawHex = tagDecode.rssiRaw.toString(16).padStart(2, '0').toUpperCase();
+            tagPanel = `
+                <div style="margin-top: 15px; border-top: 1px solid #444; padding-top: 10px;">
+                    <div style="color: var(--timer-color); font-weight: bold; margin-bottom: 5px;">TAG READ DECODE</div>
+                    <div style="display: grid; grid-template-columns: 80px 1fr; gap: 2px;">
+                        <b style="color: #888;">AN:</b> <span>${anHex} <small>(antenna)</small></span>
+                        <b style="color: #888;">PC:</b> <span>${pcHex} <small>(EPC len ${tagDecode.epcLenWords} words / ${tagDecode.epcLenBytes} bytes)</small></span>
+                        <b style="color: #888;">EPC:</b> <span id="inspectorEpcHex" style="word-break: break-all; background: #1a1a1a; padding: 2px 4px;">${tagDecode.epcHex}</span>
+                        <b style="color: #888;">RSSI Raw:</b> <span>${rssiRawHex}</span>
+                        <b style="color: #888;">RSSI:</b> <span>${tagDecode.rssiDbm} dBm</span>
+                    </div>
+                </div>
+            `;
+        }
+
         detail.innerHTML = `
             <div style="font-family: monospace; font-size: 13px;">
                 <div style="margin-bottom: 5px; border-bottom: 1px solid #444; padding-bottom: 5px;">
@@ -211,8 +238,9 @@ class AppUI {
                     <b style="color: var(--accent);">CID2/RTN:</b> <span>${cid2_rtn} <small>(${cid2_rtn === '00' ? 'SUCCESS' : ''})</small></span>
                     <b style="color: orange;">Length:</b> <span>${lenHex} <small>(${infoLen} bytes)</small></span>
                     <b style="color: var(--timer-color);">Info:</b> <span style="word-break: break-all; background: #1a1a1a; padding: 2px 4px;">${info}</span>
-                    <b style="color: #888;">Check:</b> <span>${checksum}</span>
+                    <b style="color: #888;">Check:</b> <span style="color: ${checksumColor};">${checksum} <small>(${checksumLabel})</small></span>
                 </div>
+                ${tagPanel}
             </div>
         `;
 

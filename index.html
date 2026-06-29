@@ -191,43 +191,43 @@
                 </div>
 
                 <div style="margin-top: 20px; border-top: 1px solid #333; padding-top: 15px;">
-                    <h3>Pro Tag Writer</h3>
+                    <h3>Pro Tag Writer <span style="font-size: 10px; color: #888; font-weight: normal;">(WIP — disabled, see KNOWN_ISSUES.md)</span></h3>
                     <div class="form-group" style="background: #200; padding: 10px; border-radius: 5px; border: 1px solid var(--error);">
                         <label style="font-size: 12px; color: white;">New Bib Number to Encode</label>
                         <div style="display: flex; gap: 10px;">
-                            <input type="number" id="writeBibNum" placeholder="e.g. 101" style="border-color: var(--error);">
-                            <button class="btn btn-danger" onclick="app.writeBibToTag()">Burn to Tag</button>
+                            <input type="number" id="writeBibNum" placeholder="e.g. 101" style="border-color: var(--error);" disabled>
+                            <button id="writeBibBtn" class="btn btn-danger" onclick="app.writeBibToTag()" disabled>Burn to Tag</button>
                         </div>
                         <p style="font-size: 10px; color: #aaa; margin-top: 5px;">WARNING: Ensure only ONE tag is near the antenna when writing.</p>
                     </div>
                 </div>
 
                 <div style="margin-top: 20px;">
-                    <h3>Pro Diagnostics</h3>
+                    <h3>Pro Diagnostics <span style="font-size: 10px; color: #888; font-weight: normal;">(WIP — disabled, see KNOWN_ISSUES.md)</span></h3>
                     <div style="display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 15px;">
-                        <button class="btn" onclick="app.setReaderMode('01')" style="font-size: 10px; color: var(--accent); border-color: var(--accent);">Switch to ANSWER MODE</button>
-                        <button class="btn" onclick="app.setReaderMode('00')" style="font-size: 10px;">Switch to ACTIVE MODE</button>
-                        <button class="btn" onclick="app.sendManualCommand(false, '7CFFFF823200')" style="font-size: 10px;">Get Version</button>
-                        <button class="btn" onclick="app.sendManualCommand(false, '7CFFFF123203020006')" style="font-size: 10px;">Read TID (Bank 2)</button>
+                        <button id="modeAnswerBtn" class="btn" onclick="app.setReaderMode('01')" style="font-size: 10px; color: var(--accent); border-color: var(--accent);" disabled>Switch to ANSWER MODE</button>
+                        <button id="modeActiveBtn" class="btn" onclick="app.setReaderMode('00')" style="font-size: 10px;" disabled>Switch to ACTIVE MODE</button>
+                        <button id="getVersionBtn" class="btn" onclick="app.sendManualCommand(false, '7CFFFF823200')" style="font-size: 10px;" disabled>Get Version</button>
+                        <button id="readTidBtn" class="btn" onclick="app.sendManualCommand(false, '7CFFFF123203020006')" style="font-size: 10px;" disabled>Read TID (Bank 2)</button>
                     </div>
 
-                    <h3>Manual Command (Advanced)</h3>
+                    <h3>Manual Command (Advanced) <span style="font-size: 10px; color: #888; font-weight: normal;">(WIP — disabled, see KNOWN_ISSUES.md)</span></h3>
                     <div class="form-group">
                         <label for="manualCmdHex" style="font-size: 12px; color: var(--text-dim);">Enter Hex Command (No Header/Checksum needed if using Auto-Check)</label>
                         <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                            <input type="text" id="manualCmdHex" placeholder="823200" style="width: 100%;">
-                            <button class="btn" onclick="app.sendManualCommand(false)" style="font-size: 10px;">Send with Auto-Check</button>
-                            <button class="btn btn-danger" onclick="app.sendManualCommand(true)" style="font-size: 10px;">Send RAW HEX</button>
+                            <input type="text" id="manualCmdHex" placeholder="823200" style="width: 100%;" disabled>
+                            <button id="sendCmdBtn" class="btn" onclick="app.sendManualCommand(false)" style="font-size: 10px;" disabled>Send with Auto-Check</button>
+                            <button id="sendRawBtn" class="btn btn-danger" onclick="app.sendManualCommand(true)" style="font-size: 10px;" disabled>Send RAW HEX</button>
                         </div>
                     </div>
                     <p style="font-size: 11px; color: var(--error);">DANGER: Incorrect commands can brick or reset reader settings.</p>
                 </div>
 
                 <div style="margin-top: 20px; border-top: 1px solid #333; padding-top: 15px;">
-                    <h3>Bit-Search Decoder</h3>
+                    <h3>Bit-Search Decoder <span style="font-size: 10px; color: #888; font-weight: normal;">(WIP — disabled, see KNOWN_ISSUES.md)</span></h3>
                     <div class="form-group">
                         <label style="font-size: 12px; color: var(--text-dim);">Target Bib to Find</label>
-                        <input type="number" id="searchBibNum" placeholder="e.g. 982" oninput="app.runBitSearch()">
+                        <input type="number" id="searchBibNum" placeholder="e.g. 982" oninput="app.runBitSearch()" disabled>
                     </div>
                     <div id="bitSearchResults" style="font-size: 11px; color: var(--data); font-family: monospace;"></div>
                 </div>
@@ -475,8 +475,8 @@
             const resultsEl = document.getElementById('bitSearchResults');
             if (isNaN(bib)) return resultsEl.innerHTML = "";
 
-            // Get last epc from history or detail
-            const rawEpc = document.querySelector('#inspectorDetail div div:nth-child(2) span')?.textContent;
+            // Pulled from the TAG READ DECODE panel's EPC field (only present for tag-read frames)
+            const rawEpc = document.getElementById('inspectorEpcHex')?.textContent;
             if (!rawEpc) return resultsEl.innerHTML = "No tag data to search.";
 
             const binary = rawEpc.match(/.{1,2}/g).map(b => parseInt(b, 16).toString(2).padStart(8, '0')).join('');

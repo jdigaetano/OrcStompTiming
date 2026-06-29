@@ -146,31 +146,52 @@ class BleDriver {
 
     processValidFrame(frame) {
         const fullHex = this.bytesToHex(frame);
-        if (this.onRawFrame) this.onRawFrame(fullHex);
 
         // Validate Two's Complement SUM Checksum (Section 2.3)
         // Rule: The sum of all bytes in the frame (including CHKSUM) mod 256 should be 0.
         let sum = 0;
         for (let b of frame) sum += b;
-        if ((sum & 0xFF) !== 0) {
+        const checksumValid = (sum & 0xFF) === 0;
+
+        const tagDecode = this.decodeTagFrame(frame);
+
+        if (this.onRawFrame) {
+            this.onRawFrame({ hex: fullHex, frame, checksumValid, tagDecode });
+        }
+
+        if (!checksumValid) {
             console.warn(`BleDriver: Checksum mismatch! Sum & 0xFF = ${(sum & 0xFF).toString(16)}`, fullHex);
             return;
         }
 
-        // Tag Read Detection (CID1 = 0x20)
-        if (frame[3] === 0x20) {
-            const rssiRaw = frame[frame.length - 2];
-            const processedRssi = rssiRaw > 127 ? rssiRaw - 256 : -rssiRaw;
-
-            // Extract EPC from INFO section
-            const epcLen = frame[6];
-            const tagBytes = frame.slice(6, 6 + epcLen);
-            const tagHex = this.bytesToHex(tagBytes);
-
-            if (this.onTagRead) {
-                this.onTagRead(tagHex, processedRssi);
-            }
+        if (tagDecode && this.onTagRead) {
+            this.onTagRead(tagDecode.epcHex, tagDecode.rssiDbm);
         }
+    }
+
+    // Tag Read Detection (CID1 = 0x20). Shared by processValidFrame (for onTagRead, the
+    // path real race scoring depends on) and the Tag Inspector display, so both always
+    // agree on what a tag-read frame decodes to.
+    //
+    // INFO = [AN(1B antenna)][PC(2B, standard EPC Gen2 Protocol Control word)][EPC(PC-word
+    // -derived length)][RSSI(1B)]. The EPC length is the top 5 bits of PC's high byte, in
+    // 16-bit-word units - a real Gen2 field, not a reader-specific length byte. Confirmed
+    // 2026-06-28 against 4 real scans across 3 races/tag providers and 2 different EPC
+    // lengths (KNOWN_ISSUES.md #3, now resolved).
+    decodeTagFrame(frame) {
+        if (frame[3] !== 0x20) return null;
+
+        const an = frame[6];
+        const pc = (frame[7] << 8) | frame[8];
+        const epcLenWords = frame[7] >>> 3;
+        const epcLenBytes = epcLenWords * 2;
+        const tagBytes = frame.slice(9, 9 + epcLenBytes);
+        const epcHex = this.bytesToHex(tagBytes);
+
+        const rssiRaw = frame[frame.length - 2];
+        const rssiDbm = rssiRaw > 127 ? rssiRaw - 256 : -rssiRaw;
+
+        return { an, pc, epcLenWords, epcLenBytes, epcHex, rssiRaw, rssiDbm };
     }
 
     bytesToHex(bytes) {
