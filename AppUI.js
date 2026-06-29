@@ -38,14 +38,20 @@ class AppUI {
             this.sysLog(`BLE: ${msg}`, !connected && msg.includes('FAIL'));
         };
 
+        this.driver.onRawFrame = (payload) => {
+            this.updateInspector(payload);
+        };
+
         // Link Engine to UI
         this.engine.onRecordPersisted = (record) => {
             this.totalReads++;
-            document.getElementById('pingCounter').textContent = this.totalReads;
+            const pingEl = document.getElementById('pingCounter');
+            if (pingEl) pingEl.textContent = this.totalReads;
 
             if (!this.uniqueTags.has(record.tag_hex)) {
                 this.uniqueTags.add(record.tag_hex);
-                document.getElementById('uniqueCounter').textContent = this.uniqueTags.size;
+                const uniqueEl = document.getElementById('uniqueCounter');
+                if (uniqueEl) uniqueEl.textContent = this.uniqueTags.size;
             }
 
             this.flashPing();
@@ -58,8 +64,6 @@ class AppUI {
             this.sysLog(`Recovered race: ${new Date(this.engine.raceStartTime).toLocaleTimeString()}`);
             this.startVisualClock();
 
-            // Check if we were tracking (this is a simple recovery,
-            // you might want to store isTracking in localStorage too)
             const wasTracking = localStorage.getItem('isTrackingRace') === 'true';
             if (wasTracking) {
                 this.engine.isTrackingRace = true;
@@ -178,6 +182,104 @@ class AppUI {
         const color = isError ? 'var(--error)' : 'var(--data)';
         log.innerHTML += `\n<span style="color:${color}">[${new Date().toLocaleTimeString()}] ${msg}</span>`;
         log.scrollTop = log.scrollHeight;
+    }
+
+    updateInspector({ hex, checksumValid, tagDecode }) {
+        const detail = document.getElementById('inspectorDetail');
+        const history = document.getElementById('inspectorHistoryBody');
+        if (!detail || !history) return;
+
+        // Breakdown based on Section 2.2 Table 2.2-1
+        const header = hex.substring(0, 2);
+        const address = hex.substring(2, 6);
+        const cid1 = hex.substring(6, 8);
+        const cid2_rtn = hex.substring(8, 10);
+        const lenHex = hex.substring(10, 12);
+        const infoLen = parseInt(lenHex, 16);
+        const info = hex.substring(12, 12 + (infoLen * 2));
+        const checksum = hex.substring(hex.length - 2);
+
+        const checksumColor = checksumValid ? 'var(--accent)' : 'var(--error)';
+        const checksumLabel = checksumValid ? 'VALID' : 'INVALID';
+
+        // Separate, clearly-labeled breakdown for tag-read frames (CID1=0x20). CID1=0x20
+        // itself is still an undocumented, empirically reverse-engineered frame trigger
+        // (PROTOCOL_SPEC.md Section 6, item 1), but the INFO layout below - AN + a
+        // standard EPC Gen2 PC word + PC-length-derived EPC + RSSI - is now confirmed
+        // against 4 real scans (KNOWN_ISSUES.md #3, resolved 2026-06-28).
+        let tagPanel = '';
+        if (tagDecode) {
+            const anHex = tagDecode.an.toString(16).padStart(2, '0').toUpperCase();
+            const pcHex = tagDecode.pc.toString(16).padStart(4, '0').toUpperCase();
+            const rssiRawHex = tagDecode.rssiRaw.toString(16).padStart(2, '0').toUpperCase();
+            tagPanel = `
+                <div style="margin-top: 15px; border-top: 1px solid #444; padding-top: 10px;">
+                    <div style="color: var(--timer-color); font-weight: bold; margin-bottom: 5px;">TAG READ DECODE</div>
+                    <div style="display: grid; grid-template-columns: 80px 1fr; gap: 2px;">
+                        <b style="color: #888;">AN:</b> <span>${anHex} <small>(antenna)</small></span>
+                        <b style="color: #888;">PC:</b> <span>${pcHex} <small>(EPC len ${tagDecode.epcLenWords} words / ${tagDecode.epcLenBytes} bytes)</small></span>
+                        <b style="color: #888;">EPC:</b> <span id="inspectorEpcHex" style="word-break: break-all; background: #1a1a1a; padding: 2px 4px;">${tagDecode.epcHex}</span>
+                        <b style="color: #888;">RSSI Raw:</b> <span>${rssiRawHex}</span>
+                        <b style="color: #888;">RSSI:</b> <span>${tagDecode.rssiDbm} dBm</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        detail.innerHTML = `
+            <div style="font-family: monospace; font-size: 13px;">
+                <div style="margin-bottom: 5px; border-bottom: 1px solid #444; padding-bottom: 5px;">
+                    <span style="color: #555;">Raw:</span> <span style="word-break: break-all; font-size: 11px;">${hex}</span>
+                </div>
+                <div style="display: grid; grid-template-columns: 80px 1fr; gap: 2px;">
+                    <b style="color: #888;">Header:</b> <span>${header} <small>(${header === '7C' ? 'Cmd Echo' : 'Resp'})</small></span>
+                    <b style="color: #888;">Addr:</b> <span>${address}</span>
+                    <b style="color: var(--data);">CID1:</b> <span>${cid1}</span>
+                    <b style="color: var(--accent);">CID2/RTN:</b> <span>${cid2_rtn} <small>(${cid2_rtn === '00' ? 'SUCCESS' : ''})</small></span>
+                    <b style="color: orange;">Length:</b> <span>${lenHex} <small>(${infoLen} bytes)</small></span>
+                    <b style="color: var(--timer-color);">Info:</b> <span style="word-break: break-all; background: #1a1a1a; padding: 2px 4px;">${info}</span>
+                    <b style="color: #888;">Check:</b> <span style="color: ${checksumColor};">${checksum} <small>(${checksumLabel})</small></span>
+                </div>
+                ${tagPanel}
+            </div>
+        `;
+
+        if (history.innerHTML.includes('No data captured')) history.innerHTML = '';
+        const row = `<tr><td style="white-space:nowrap">${new Date().toLocaleTimeString()}</td><td style="font-size:10px; word-break:break-all; font-family:monospace;">${hex}</td></tr>`;
+        history.insertAdjacentHTML('afterbegin', row);
+        if (history.children.length > 20) history.removeChild(history.lastChild);
+    }
+
+    async setReaderMode(mode) {
+        // mode 01 = Answer Mode (Quiet), 00 = Active Mode (Beeping)
+        const cmd = `7CFFFF010201${mode}`;
+        try {
+            await this.driver.sendRawHex(cmd);
+            this.sysLog(`SYSTEM: Switched to ${mode === '01' ? 'ANSWER' : 'ACTIVE'} mode.`);
+        } catch (e) {
+            this.sysLog(`MODE ERROR: ${e.message}`, true);
+        }
+    }
+
+    async writeBibToTag() {
+        const bib = document.getElementById('writeBibNum').value;
+        if (!bib) return alert("Enter a Bib number first");
+
+        const bibHex = parseInt(bib, 10).toString(16).padStart(4, '0').toUpperCase();
+
+        // Command 12 31 (Write Memory)
+        // Bank 01 (EPC), Start 02 (Skip PC), Len 01 (1 word / 2 bytes)
+        // Full Info: [Bank][Start][Len][Data] = 01 02 01 + [bibHex]
+        const info = `010201${bibHex}`;
+        const lenByte = (info.length / 2).toString(16).padStart(2, '0');
+        const cmd = `7CFFFF1231${lenByte}${info}`;
+
+        try {
+            this.sysLog(`WRITER: Attempting to burn Bib ${bib} (${bibHex}) to tag...`);
+            await this.driver.sendRawHex(cmd);
+        } catch (e) {
+            this.sysLog(`WRITE ERROR: ${e.message}`, true);
+        }
     }
 
     async renderMappingTable() {

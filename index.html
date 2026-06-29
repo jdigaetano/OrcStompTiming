@@ -72,13 +72,14 @@
         <h2>UHF RFID Offline Timing Deck</h2>
         <div>
             <button id="mockToggleBtn" class="btn" style="padding: 4px 8px; font-size: 10px; border-color: #555; color: #555;" onclick="app.toggleMockMode()">ENABLE MOCK MODE</button>
-            <span style="color: var(--text-dim); font-size: 10px; margin-left: 10px;">v1.3-mock</span>
+            <span style="color: var(--text-dim); font-size: 10px; margin-left: 10px;">v1.3.9-spec</span>
         </div>
     </div>
 
     <div class="nav-tabs">
         <button id="raceTabBtn" class="tab-btn active" onclick="app.switchTab('race-tab', this)">RACE OPERATION</button>
         <button id="mappingTabBtn" class="tab-btn" onclick="app.switchTab('mapping-tab', this)">CHIP-TO-BIB KIOSK</button>
+        <button id="inspectorTabBtn" class="tab-btn" onclick="app.switchTab('inspector-tab', this)">TAG INSPECTOR</button>
     </div>
 
     <div id="race-tab" class="tab-content active">
@@ -177,6 +178,80 @@
         </div>
     </div>
 
+    <div id="inspector-tab" class="tab-content">
+        <div class="control-panel" style="background: #002233; border: 1px solid var(--data);">
+            <strong>PROTOCOL ANALYZER:</strong> Wave a tag to see a bit-level breakdown of the hardware frame.
+        </div>
+
+        <div class="grid-2">
+            <div>
+                <h3>Last Scanned Frame</h3>
+                <div id="inspectorDetail" style="background: #000; padding: 20px; border-radius: 5px; border: 1px solid #333; line-height: 1.8;">
+                    <p style="color: var(--text-dim); text-align: center;">Awaiting scan...</p>
+                </div>
+
+                <div style="margin-top: 20px; border-top: 1px solid #333; padding-top: 15px;">
+                    <h3>Pro Tag Writer <span style="font-size: 10px; color: #888; font-weight: normal;">(WIP — disabled, see KNOWN_ISSUES.md)</span></h3>
+                    <div class="form-group" style="background: #200; padding: 10px; border-radius: 5px; border: 1px solid var(--error);">
+                        <label style="font-size: 12px; color: white;">New Bib Number to Encode</label>
+                        <div style="display: flex; gap: 10px;">
+                            <input type="number" id="writeBibNum" placeholder="e.g. 101" style="border-color: var(--error);" disabled>
+                            <button id="writeBibBtn" class="btn btn-danger" onclick="app.writeBibToTag()" disabled>Burn to Tag</button>
+                        </div>
+                        <p style="font-size: 10px; color: #aaa; margin-top: 5px;">WARNING: Ensure only ONE tag is near the antenna when writing.</p>
+                    </div>
+                </div>
+
+                <div style="margin-top: 20px;">
+                    <h3>Pro Diagnostics <span style="font-size: 10px; color: #888; font-weight: normal;">(WIP — disabled, see KNOWN_ISSUES.md)</span></h3>
+                    <div style="display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 15px;">
+                        <button id="modeAnswerBtn" class="btn" onclick="app.setReaderMode('01')" style="font-size: 10px; color: var(--accent); border-color: var(--accent);" disabled>Switch to ANSWER MODE</button>
+                        <button id="modeActiveBtn" class="btn" onclick="app.setReaderMode('00')" style="font-size: 10px;" disabled>Switch to ACTIVE MODE</button>
+                        <button id="getVersionBtn" class="btn" onclick="app.sendManualCommand(false, '7CFFFF823200')" style="font-size: 10px;" disabled>Get Version</button>
+                        <button id="readTidBtn" class="btn" onclick="app.sendManualCommand(false, '7CFFFF123203020006')" style="font-size: 10px;" disabled>Read TID (Bank 2)</button>
+                    </div>
+
+                    <h3>Manual Command (Advanced) <span style="font-size: 10px; color: #888; font-weight: normal;">(WIP — disabled, see KNOWN_ISSUES.md)</span></h3>
+                    <div class="form-group">
+                        <label for="manualCmdHex" style="font-size: 12px; color: var(--text-dim);">Enter Hex Command (No Header/Checksum needed if using Auto-Check)</label>
+                        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                            <input type="text" id="manualCmdHex" placeholder="823200" style="width: 100%;" disabled>
+                            <button id="sendCmdBtn" class="btn" onclick="app.sendManualCommand(false)" style="font-size: 10px;" disabled>Send with Auto-Check</button>
+                            <button id="sendRawBtn" class="btn btn-danger" onclick="app.sendManualCommand(true)" style="font-size: 10px;" disabled>Send RAW HEX</button>
+                        </div>
+                    </div>
+                    <p style="font-size: 11px; color: var(--error);">DANGER: Incorrect commands can brick or reset reader settings.</p>
+                </div>
+
+                <div style="margin-top: 20px; border-top: 1px solid #333; padding-top: 15px;">
+                    <h3>Bit-Search Decoder <span style="font-size: 10px; color: #888; font-weight: normal;">(WIP — disabled, see KNOWN_ISSUES.md)</span></h3>
+                    <div class="form-group">
+                        <label style="font-size: 12px; color: var(--text-dim);">Target Bib to Find</label>
+                        <input type="number" id="searchBibNum" placeholder="e.g. 982" oninput="app.runBitSearch()" disabled>
+                    </div>
+                    <div id="bitSearchResults" style="font-size: 11px; color: var(--data); font-family: monospace;"></div>
+                </div>
+            </div>
+
+            <div>
+                <h3>Frame History</h3>
+                <div class="table-wrapper">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Time</th>
+                                <th>Full Raw Frame</th>
+                            </tr>
+                        </thead>
+                        <tbody id="inspectorHistoryBody">
+                            <tr><td colspan="2" style="text-align:center; color:var(--text-dim);">No data captured</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Architectural Scripts -->
     <script src="BleDriver.js"></script>
     <script src="MockBleDriver.js"></script>
@@ -198,7 +273,7 @@
 
             if (!isMocking) {
                 // Switch to Mock
-                if (driver.isConnected) driver.disconnect();
+                if (driver.device && driver.device.gatt.connected) driver.disconnect();
                 driver = new MockBleDriver();
                 btn.textContent = "DISABLE MOCK MODE";
                 btn.style.borderColor = "var(--data)";
@@ -217,7 +292,6 @@
             app.driver = driver;
             app.setupBindings();
 
-            // If in mock mode, add a "Simulate Runner" button to the console for testing
             if (!isMocking) {
                 app.sysLog("MOCK: Click [Simulate] in log to fire test data.");
                 const log = document.getElementById('consoleLog');
@@ -227,16 +301,14 @@
 
         app.runMockScenario = async () => {
             if (!(driver instanceof MockBleDriver)) return;
-            app.sysLog("MOCK: Starting 10s Peak RSSI scenario for Tag E200AAAA...");
-
+            app.sysLog("MOCK: Starting 10s Peak RSSI scenario...");
             const scenario = [
-                { tag: 'E200AAAA', rssi: -70, delay: 0 },    // First read (far)
-                { tag: 'E200AAAA', rssi: -50, delay: 2000 }, // Getting closer
-                { tag: 'E200AAAA', rssi: -30, delay: 3000 }, // PEAK (on the line)
-                { tag: 'E200AAAA', rssi: -55, delay: 2000 }, // Moving away
-                { tag: 'E200AAAA', rssi: -90, delay: 5000 }, // Outside 10s window (should be ignored)
+                { tag: 'CCFFFFE200AAAA32FD', rssi: -70, delay: 0 },
+                { tag: 'CCFFFFE200AAAA32FD', rssi: -50, delay: 2000 },
+                { tag: 'CCFFFFE200AAAA32FD', rssi: -30, delay: 3000 },
+                { tag: 'CCFFFFE200AAAA32FD', rssi: -55, delay: 2000 },
+                { tag: 'CCFFFFE200AAAA32FD', rssi: -90, delay: 5000 },
             ];
-
             await driver.playSequence(scenario);
             app.sysLog("MOCK: Sequence complete.");
         };
@@ -266,7 +338,7 @@
         app.resetRace = async () => {
             if (confirm("Reset current race timings?")) {
                 await engine.clearRaceData();
-                location.reload(); // Hard refresh to reset UI state easily
+                location.reload();
             }
         };
 
@@ -280,52 +352,37 @@
         app.exportCsv = async () => {
             const reads = await engine.getAllFromStore('race_reads');
             const maps = await engine.getAllFromStore('chip_map');
-
             if (!reads.length) return alert("No data to export");
-
             const chipToBib = {};
             maps.forEach(m => chipToBib[m.chip_hex] = m.bib_num);
-
-            // Group reads by Tag
             const groups = {};
             reads.forEach(r => {
                 if (!groups[r.tag_hex]) groups[r.tag_hex] = [];
                 groups[r.tag_hex].push(r);
             });
-
             const results = {};
             const startMs = new Date(engine.raceStartTime).getTime();
-
             Object.keys(groups).forEach(hex => {
                 const tagReads = groups[hex].sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
-
-                // Peak RSSI within 10s Window Logic
                 const firstRead = tagReads[0];
-                const firstMs = new Date(firstRead.timestamp).getTime();
-                const windowLimitMs = firstMs + 10000;
-
+                const windowLimitMs = new Date(firstRead.timestamp).getTime() + 10000;
                 let bestRead = firstRead;
                 for (const r of tagReads) {
                     const currentMs = new Date(r.timestamp).getTime();
-                    if (currentMs > windowLimitMs) break; // Window closed
-                    if (r.rssi > bestRead.rssi) {
-                        bestRead = r; // Stronger signal found
-                    }
+                    if (currentMs > windowLimitMs) break;
+                    if (r.rssi > bestRead.rssi) bestRead = r;
                 }
-
                 const elapsed = new Date(bestRead.timestamp).getTime() - startMs;
                 results[hex] = {
                     bib: chipToBib[hex] || "UNKNOWN",
                     time: app.formatTime(elapsed)
                 };
             });
-
             let csv = "Bib,Time,Chip\n";
             Object.keys(results).forEach(hex => {
                 const res = results[hex];
                 csv += `"${res.bib}","${res.time}","${hex}"\n`;
             });
-
             const blob = new Blob([csv], { type: 'text/csv' });
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');
@@ -351,7 +408,7 @@
             const file = event.target.files[0];
             if (!file) return;
             const text = await file.text();
-            const lines = text.split('\n');
+            const lines = text.split('\n').filter(l => l.trim() !== '');
             let count = 0;
             for (let line of lines) {
                 const [hex, bib] = line.split(',').map(s => s.trim());
@@ -370,14 +427,9 @@
             const text = await file.text();
             const lines = text.split('\n').filter(l => l.trim() !== '');
             if (lines.length < 2) return alert("File is empty or missing data.");
-
             const headers = lines[0].split(',').map(h => h.trim().toUpperCase());
             const chipColIndex = headers.indexOf("CHIP");
-
-            if (chipColIndex === -1) {
-                return alert("Invalid CSV: Could not find a 'Chip' column header.");
-            }
-
+            if (chipColIndex === -1) return alert("Invalid CSV: Could not find a 'Chip' column header.");
             const chipsToRemove = new Set();
             for (let i = 1; i < lines.length; i++) {
                 const parts = lines[i].split(',');
@@ -386,9 +438,7 @@
                     if (chip) chipsToRemove.add(chip);
                 }
             }
-
             if (chipsToRemove.size === 0) return alert("No chip data found in file.");
-
             if (confirm(`Remove ${chipsToRemove.size} used chips from the active registry?`)) {
                 for (let hex of chipsToRemove) {
                     await app.deleteMapping(hex);
@@ -396,10 +446,50 @@
                 alert("Reconciliation complete.");
                 app.renderMappingTable();
             }
-            event.target.value = ''; // Reset file input
+            event.target.value = '';
         };
 
-        // Register PWA Service Worker
+        app.sendManualCommand = async (isRaw, overrideHex) => {
+            const input = document.getElementById('manualCmdHex');
+            let hex = (overrideHex || input.value).trim();
+            if (!hex) return;
+            try {
+                if (isRaw) {
+                    const data = new Uint8Array(hex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+                    await driver.writeCharacteristic.writeValue(data);
+                    app.sysLog(`SENT RAW: ${hex}`);
+                } else {
+                    // Ensure it has 7CFFFF header if not already there
+                    if (!hex.startsWith('7C')) hex = '7CFFFF' + hex;
+                    await driver.sendRawHex(hex);
+                    app.sysLog(`SENT CMD: ${hex}`);
+                }
+                if (!overrideHex) input.value = '';
+            } catch (e) {
+                app.sysLog(`SEND ERROR: ${e.message}`, true);
+            }
+        };
+
+        app.runBitSearch = () => {
+            const bib = parseInt(document.getElementById('searchBibNum').value);
+            const resultsEl = document.getElementById('bitSearchResults');
+            if (isNaN(bib)) return resultsEl.innerHTML = "";
+
+            // Pulled from the TAG READ DECODE panel's EPC field (only present for tag-read frames)
+            const rawEpc = document.getElementById('inspectorEpcHex')?.textContent;
+            if (!rawEpc) return resultsEl.innerHTML = "No tag data to search.";
+
+            const binary = rawEpc.match(/.{1,2}/g).map(b => parseInt(b, 16).toString(2).padStart(8, '0')).join('');
+            const bibBinary = bib.toString(2);
+
+            const index = binary.indexOf(bibBinary);
+            if (index !== -1) {
+                resultsEl.innerHTML = `<span style="color:var(--accent)">MATCH!</span> Bib ${bib} found at bit offset ${index}.`;
+            } else {
+                resultsEl.innerHTML = `Bib ${bib} bits not found in EPC.`;
+            }
+        };
+
         if ('serviceWorker' in navigator) {
             navigator.serviceWorker.register('./service-worker.js');
         }

@@ -5,6 +5,7 @@
 class MockBleDriver {
     constructor() {
         this.onTagRead = null;
+        this.onRawFrame = null;
         this.onStatusChange = null;
         this.isConnected = false;
         this.interval = null;
@@ -27,6 +28,10 @@ class MockBleDriver {
         this.updateStatus("MOCK READER OFFLINE", false);
     }
 
+    async sendRawHex(hex) {
+        console.log("MockBleDriver: Received Raw Hex Command:", hex);
+    }
+
     updateStatus(msg, connected) {
         if (this.onStatusChange) this.onStatusChange(msg, connected);
     }
@@ -42,8 +47,22 @@ class MockBleDriver {
 
         for (const item of sequence) {
             await new Promise(r => setTimeout(r, item.delay || 0));
+
+            // Re-emit raw frame for the inspector. Matches BleDriver's onRawFrame contract
+            // ({hex, checksumValid, tagDecode}) - tagDecode is null since these mock frames
+            // don't share BleDriver's real CID1=0x20 push-frame shape (KNOWN_ISSUES.md #4).
+            if (this.onRawFrame) {
+                const frame = item.tag.startsWith('CCFFFF') ? item.tag : `CCFFFF010101${item.tag}${item.rssi}00`;
+                this.onRawFrame({ hex: frame, checksumValid: true, tagDecode: null });
+            }
+
             if (this.onTagRead) {
-                this.onTagRead(item.tag, item.rssi || -50);
+                // Strip CCFFFF if present for the engine
+                let cleanTag = item.tag;
+                if (cleanTag.startsWith('CCFFFF')) {
+                    cleanTag = cleanTag.substring(6, cleanTag.length - 4);
+                }
+                this.onTagRead(cleanTag, item.rssi || -50);
             }
         }
     }
