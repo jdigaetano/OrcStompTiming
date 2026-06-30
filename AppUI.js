@@ -42,6 +42,12 @@ class AppUI {
             this.updateInspector(payload);
         };
 
+        // Page visibility: stop the visual clock when backgrounded (saves resources and
+        // avoids a frozen display); restart it when foregrounded if the race is active.
+        // Web Bluetooth events fire regardless of visibility, so no tag reads are lost.
+        this._visibilityHandler = () => this.handleVisibilityChange();
+        document.addEventListener('visibilitychange', this._visibilityHandler);
+
         // Link Engine to UI
         this.engine.onRecordPersisted = (record) => {
             this.totalReads++;
@@ -71,6 +77,16 @@ class AppUI {
             }
         }
         this.renderMappingTable();
+
+        if (localStorage.getItem('bleDeviceId')) {
+            const savedName = localStorage.getItem('bleDeviceName') || 'saved reader';
+            this.sysLog(`SYSTEM: "${savedName}" was previously connected — attempting auto-connect...`);
+            this.driver.tryAutoConnect().then(ok => {
+                if (!ok) this.sysLog('SYSTEM: Auto-connect failed. Click "Connect Reader" to pair manually.');
+            }).catch(() => {
+                this.sysLog('SYSTEM: Auto-connect failed. Click "Connect Reader" to pair manually.');
+            });
+        }
     }
 
     // UI Logic Methods
@@ -128,6 +144,15 @@ class AppUI {
 
         const startBtn = document.getElementById('startRaceBtn');
         if (startBtn) startBtn.disabled = !connected;
+
+        const connectBtn = document.getElementById('connectBtn');
+        if (connectBtn) connectBtn.textContent = connected ? 'Disconnect' : 'Connect Reader';
+
+        const forgetBtn = document.getElementById('forgetDeviceBtn');
+        if (forgetBtn) {
+            const hasSaved = !!localStorage.getItem('bleDeviceId');
+            forgetBtn.style.display = (!connected && hasSaved) ? '' : 'none';
+        }
     }
 
     updateRaceStatus(running) {
@@ -280,6 +305,63 @@ class AppUI {
         } catch (e) {
             this.sysLog(`WRITE ERROR: ${e.message}`, true);
         }
+    }
+
+    handleVisibilityChange() {
+        if (document.hidden) {
+            this.sysLog('Tab hidden — BLE reads continue, display throttled by browser.');
+        } else {
+            this.sysLog('Tab visible — display restored.');
+        }
+    }
+
+    formatWallClock(isoString) {
+        const d = new Date(isoString);
+        const hh = d.getHours().toString().padStart(2, '0');
+        const mm = d.getMinutes().toString().padStart(2, '0');
+        const ss = d.getSeconds().toString().padStart(2, '0');
+        const ms = d.getMilliseconds().toString().padStart(3, '0');
+        return `${hh}:${mm}:${ss}.${ms}`;
+    }
+
+    buildResultsFromReads(reads, maps, raceStartMs) {
+        const chipToBib = {};
+        maps.forEach(m => chipToBib[m.chip_hex] = m.bib_num);
+
+        const groups = {};
+        reads.forEach(r => {
+            if (!groups[r.tag_hex]) groups[r.tag_hex] = [];
+            groups[r.tag_hex].push(r);
+        });
+
+        const results = {};
+        Object.keys(groups).forEach(hex => {
+            const tagReads = groups[hex].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+            const firstRead = tagReads[0];
+            const windowLimitMs = new Date(firstRead.timestamp).getTime() + 10000;
+            let bestRead = firstRead;
+            for (const r of tagReads) {
+                if (new Date(r.timestamp).getTime() > windowLimitMs) break;
+                if (r.rssi > bestRead.rssi) bestRead = r;
+            }
+            const elapsedMs = new Date(bestRead.timestamp).getTime() - raceStartMs;
+            results[hex] = {
+                bib: chipToBib[hex] ?? 'UNKNOWN',
+                elapsedMs,
+                elapsed: this.formatTime(elapsedMs),
+                wallClock: this.formatWallClock(bestRead.timestamp),
+            };
+        });
+        return results;
+    }
+
+    buildCsvString(results) {
+        let csv = 'Bib,Elapsed Time,Wall Clock,Chip\n';
+        Object.keys(results).forEach(hex => {
+            const r = results[hex];
+            csv += `"${r.bib}","${r.elapsed}","${r.wallClock}","${hex}"\n`;
+        });
+        return csv;
     }
 
     async renderMappingTable() {

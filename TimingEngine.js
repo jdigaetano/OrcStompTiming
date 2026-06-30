@@ -56,10 +56,12 @@ class TimingEngine {
     handleIncomingTag(tagHex, rssi) {
         if (!this.isTrackingRace || !this.raceStartTime) return;
 
+        const now = new Date();
         const record = {
             tag_hex: tagHex,
             rssi: rssi,
-            timestamp: new Date().toISOString()
+            timestamp: now.toISOString(),
+            elapsed_ms: now.getTime() - new Date(this.raceStartTime).getTime(),
         };
 
         // High-speed producer push

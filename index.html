@@ -84,7 +84,8 @@
 
     <div id="race-tab" class="tab-content active">
         <div class="control-panel">
-            <button id="connectBtn" class="btn" onclick="app.connectBle()">Connect Reader</button>
+            <button id="connectBtn" class="btn" onclick="app.handleConnectionBtn()">Connect Reader</button>
+            <button id="forgetDeviceBtn" class="btn" onclick="app.forgetDevice()" style="display:none; font-size:11px; color:#555; border-color:#555;">Forget Device</button>
             <button id="startRaceBtn" class="btn" style="color: gold; border-color: gold;" onclick="app.toggleRace()" disabled>Start Clock</button>
             <button id="exportBtn" class="btn" onclick="app.exportCsv()">Export Standings CSV</button>
             <button id="resetRaceBtn" class="btn btn-danger" onclick="app.resetRace()">Reset Race Data</button>
@@ -265,7 +266,22 @@
         let app = new AppUI(engine, driver);
 
         // Global bridge for inline HTML onclicks
-        app.connectBle = () => driver.connect().catch(e => console.error(e));
+        app.handleConnectionBtn = async () => {
+            if (driver.device && driver.device.gatt.connected) {
+                await driver.disconnect();
+            } else {
+                const ok = await driver.tryAutoConnect();
+                if (!ok) driver.connect().catch(e => app.sysLog(`Connect failed: ${e.message}`, true));
+            }
+        };
+
+        app.forgetDevice = () => {
+            localStorage.removeItem('bleDeviceId');
+            localStorage.removeItem('bleDeviceName');
+            const forgetBtn = document.getElementById('forgetDeviceBtn');
+            if (forgetBtn) forgetBtn.style.display = 'none';
+            app.sysLog('SYSTEM: Saved device forgotten — next connect will use the device picker.');
+        };
 
         app.toggleMockMode = () => {
             const btn = document.getElementById('mockToggleBtn');
@@ -303,11 +319,11 @@
             if (!(driver instanceof MockBleDriver)) return;
             app.sysLog("MOCK: Starting 10s Peak RSSI scenario...");
             const scenario = [
-                { tag: 'CCFFFFE200AAAA32FD', rssi: -70, delay: 0 },
-                { tag: 'CCFFFFE200AAAA32FD', rssi: -50, delay: 2000 },
-                { tag: 'CCFFFFE200AAAA32FD', rssi: -30, delay: 3000 },
-                { tag: 'CCFFFFE200AAAA32FD', rssi: -55, delay: 2000 },
-                { tag: 'CCFFFFE200AAAA32FD', rssi: -90, delay: 5000 },
+                { epcHex: 'AABBCCDDEEFF001122334455', rssi: -70, delay: 0 },
+                { epcHex: 'AABBCCDDEEFF001122334455', rssi: -50, delay: 2000 },
+                { epcHex: 'AABBCCDDEEFF001122334455', rssi: -30, delay: 3000 },
+                { epcHex: 'AABBCCDDEEFF001122334455', rssi: -55, delay: 2000 },
+                { epcHex: 'AABBCCDDEEFF001122334455', rssi: -90, delay: 5000 },
             ];
             await driver.playSequence(scenario);
             app.sysLog("MOCK: Sequence complete.");
@@ -353,36 +369,9 @@
             const reads = await engine.getAllFromStore('race_reads');
             const maps = await engine.getAllFromStore('chip_map');
             if (!reads.length) return alert("No data to export");
-            const chipToBib = {};
-            maps.forEach(m => chipToBib[m.chip_hex] = m.bib_num);
-            const groups = {};
-            reads.forEach(r => {
-                if (!groups[r.tag_hex]) groups[r.tag_hex] = [];
-                groups[r.tag_hex].push(r);
-            });
-            const results = {};
             const startMs = new Date(engine.raceStartTime).getTime();
-            Object.keys(groups).forEach(hex => {
-                const tagReads = groups[hex].sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
-                const firstRead = tagReads[0];
-                const windowLimitMs = new Date(firstRead.timestamp).getTime() + 10000;
-                let bestRead = firstRead;
-                for (const r of tagReads) {
-                    const currentMs = new Date(r.timestamp).getTime();
-                    if (currentMs > windowLimitMs) break;
-                    if (r.rssi > bestRead.rssi) bestRead = r;
-                }
-                const elapsed = new Date(bestRead.timestamp).getTime() - startMs;
-                results[hex] = {
-                    bib: chipToBib[hex] || "UNKNOWN",
-                    time: app.formatTime(elapsed)
-                };
-            });
-            let csv = "Bib,Time,Chip\n";
-            Object.keys(results).forEach(hex => {
-                const res = results[hex];
-                csv += `"${res.bib}","${res.time}","${hex}"\n`;
-            });
+            const results = app.buildResultsFromReads(reads, maps, startMs);
+            const csv = app.buildCsvString(results);
             const blob = new Blob([csv], { type: 'text/csv' });
             const url = window.URL.createObjectURL(blob);
             const a = document.createElement('a');

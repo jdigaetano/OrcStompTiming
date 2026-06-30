@@ -64,6 +64,24 @@ describe('Mission Critical: Data Integrity & Recovery', () => {
         });
     });
 
+    describe('Dual Timestamps', () => {
+        it('handleIncomingTag() stores both an ISO wall-clock timestamp and elapsed_ms', async () => {
+            const startIso = new Date(Date.now() - 5000).toISOString();
+            engine.raceStartTime = startIso;
+            engine.isTrackingRace = true;
+
+            engine.handleIncomingTag('TAG_A', -50);
+            await new Promise(r => setTimeout(r, 400));
+
+            const reads = await engine.getAllFromStore('race_reads');
+            expect(reads).toHaveLength(1);
+            expect(reads[0].timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+            expect(typeof reads[0].elapsed_ms).toBe('number');
+            expect(reads[0].elapsed_ms).toBeGreaterThanOrEqual(5000);
+            expect(reads[0].elapsed_ms).toBeLessThan(6000);
+        });
+    });
+
     describe('Kiosk Security', () => {
         it('should preserve mappings even when race data is wiped', async () => {
             // 1. Setup mapping and race data

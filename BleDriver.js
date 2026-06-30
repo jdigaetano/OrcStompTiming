@@ -23,7 +23,7 @@ class BleDriver {
 
         try {
             this.device = await navigator.bluetooth.requestDevice({
-                acceptAllDevices: true,
+                filters: [{ services: ['0000ffe0-0000-1000-8000-00805f9b34fb'] }],
                 optionalServices: [
                     "0000ffe0-0000-1000-8000-00805f9b34fb",
                     "0000ffe1-0000-1000-8000-00805f9b34fb"
@@ -35,7 +35,29 @@ class BleDriver {
         }
 
         this.device.addEventListener('gattserverdisconnected', () => this.handleDisconnect());
-        return await this.establishConnection();
+        const result = await this.establishConnection();
+        localStorage.setItem('bleDeviceId', this.device.id);
+        localStorage.setItem('bleDeviceName', this.device.name || '');
+        return result;
+    }
+
+    async tryAutoConnect() {
+        const savedId = localStorage.getItem('bleDeviceId');
+        if (!savedId) return false;
+        if (typeof navigator.bluetooth.getDevices !== 'function') return false;
+
+        try {
+            const devices = await navigator.bluetooth.getDevices();
+            const device = devices.find(d => d.id === savedId);
+            if (!device) return false;
+
+            this.device = device;
+            this.device.addEventListener('gattserverdisconnected', () => this.handleDisconnect());
+            await this.establishConnection();
+            return true;
+        } catch (e) {
+            return false;
+        }
     }
 
     // device.gatt.connect() is known to be flaky on Windows right after a scan
@@ -86,6 +108,10 @@ class BleDriver {
 
             if (!this.notifyCharacteristic) this.notifyCharacteristic = this.writeCharacteristic;
             if (!this.writeCharacteristic) this.writeCharacteristic = this.notifyCharacteristic;
+
+            if (!this.notifyCharacteristic && !this.writeCharacteristic) {
+                throw new Error('No usable characteristics found — is this the right device?');
+            }
 
             if (this.notifyCharacteristic && this.notifyCharacteristic.properties.notify) {
                 this.updateStatus("Starting Notifications...", false);
@@ -230,6 +256,8 @@ class BleDriver {
     async disconnect() {
         this.intentionalDisconnect = true;
         this.isAutoReconnecting = false;
+        localStorage.removeItem('bleDeviceId');
+        localStorage.removeItem('bleDeviceName');
         if (this.device && this.device.gatt.connected) await this.device.gatt.disconnect();
         this.updateStatus("READER OFFLINE", false);
     }
