@@ -12,6 +12,7 @@ class TimingEngine {
         this.raceStartTime = null;
 
         this.writeQueue = [];
+        this.seenTags = new Map(); // tag_hex → first-seen ms; gate for 10s write window
         this.onRecordPersisted = null; // Callback for UI updates
 
         // Expose a promise that resolves when DB is ready
@@ -79,6 +80,14 @@ class TimingEngine {
             const store = tx.objectStore('race_reads');
 
             batch.forEach(record => {
+                const recordTime = new Date(record.timestamp).getTime();
+                const firstSeen = this.seenTags.get(record.tag_hex);
+                if (firstSeen !== undefined && recordTime - firstSeen >= 10000) {
+                    return; // past 10-second window — drop
+                }
+                if (firstSeen === undefined) {
+                    this.seenTags.set(record.tag_hex, recordTime);
+                }
                 store.add(record);
                 if (this.onRecordPersisted) this.onRecordPersisted(record);
             });
@@ -105,6 +114,7 @@ class TimingEngine {
         localStorage.removeItem('raceStartTime');
         this.raceStartTime = null;
         this.isTrackingRace = false;
+        this.seenTags.clear();
         return new Promise(r => tx.oncomplete = r);
     }
 
