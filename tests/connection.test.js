@@ -88,16 +88,17 @@ describe('BleDriver Connection Lifecycle', () => {
             expect(driver.intentionalDisconnect).toBe(false);
         });
 
-        it('uses an ffe0 service filter (not acceptAllDevices) to narrow the device picker', async () => {
+        it('uses acceptAllDevices with optionalServices (ffe0 service filter excluded real hardware from picker)', async () => {
             const service = makeService('0000ffe0-0000-1000-8000-00805f9b34fb', [
                 makeCharacteristic('0000ffe1-0000-1000-8000-00805f9b34fb', { write: true, notify: true }),
             ]);
             global.navigator.bluetooth.requestDevice.mockResolvedValue(makeWorkingDevice([service]));
             await driver.connect();
             const callArgs = global.navigator.bluetooth.requestDevice.mock.calls[0][0];
-            expect(callArgs.filters).toBeDefined();
-            expect(callArgs.acceptAllDevices).toBeUndefined();
-            expect(callArgs.filters[0].services).toContain('0000ffe0-0000-1000-8000-00805f9b34fb');
+            expect(callArgs.acceptAllDevices).toBe(true);
+            expect(callArgs.filters).toBeUndefined();
+            expect(callArgs.optionalServices).toContain('0000ffe0-0000-1000-8000-00805f9b34fb');
+            expect(callArgs.optionalServices).toContain('0000ffe1-0000-1000-8000-00805f9b34fb');
         });
 
         it('saves the device id to localStorage after a successful connection', async () => {
@@ -286,7 +287,8 @@ describe('BleDriver Connection Lifecycle', () => {
 
     describe('disconnect()', () => {
         it('marks the disconnect intentional and tears down an active GATT link', async () => {
-            driver.device = { gatt: { connected: true, disconnect: vi.fn().mockResolvedValue(undefined) } };
+            const gattDisconnect = vi.fn().mockResolvedValue(undefined);
+            driver.device = { gatt: { connected: true, disconnect: gattDisconnect } };
             const statuses = [];
             driver.onStatusChange = (msg, connected) => statuses.push({ msg, connected });
 
@@ -294,16 +296,17 @@ describe('BleDriver Connection Lifecycle', () => {
 
             expect(driver.intentionalDisconnect).toBe(true);
             expect(driver.isAutoReconnecting).toBe(false);
-            expect(driver.device.gatt.disconnect).toHaveBeenCalled();
+            expect(gattDisconnect).toHaveBeenCalled();
             expect(statuses.at(-1)).toEqual({ msg: 'READER OFFLINE', connected: false });
         });
 
         it('does not call gatt.disconnect when not currently connected', async () => {
-            driver.device = { gatt: { connected: false, disconnect: vi.fn() } };
+            const gattDisconnect = vi.fn();
+            driver.device = { gatt: { connected: false, disconnect: gattDisconnect } };
 
             await driver.disconnect();
 
-            expect(driver.device.gatt.disconnect).not.toHaveBeenCalled();
+            expect(gattDisconnect).not.toHaveBeenCalled();
         });
 
         it('is safe to call with no device at all', async () => {
@@ -327,6 +330,44 @@ describe('BleDriver Connection Lifecycle', () => {
             driver.device = { gatt: { connected: false, disconnect: vi.fn() } };
             await driver.disconnect();
             expect(global.localStorage.getItem('bleDeviceName')).toBeNull();
+        });
+
+        it('nulls driver.device so the retry button cannot appear after an intentional disconnect', async () => {
+            driver.device = { gatt: { connected: false, disconnect: vi.fn() } };
+            await driver.disconnect();
+            expect(driver.device).toBeNull();
+        });
+    });
+
+    describe('retryConnect()', () => {
+        it('throws if no device has been selected yet', async () => {
+            driver.device = null;
+            await expect(driver.retryConnect()).rejects.toThrow('No device selected');
+        });
+
+        it('calls establishConnection() without calling requestDevice()', async () => {
+            const service = makeService('0000ffe0-0000-1000-8000-00805f9b34fb', [
+                makeCharacteristic('0000ffe1-0000-1000-8000-00805f9b34fb', { write: true, notify: true }),
+            ]);
+            driver.device = makeWorkingDevice([service], { id: 'retry-id', name: 'Retry Reader' });
+            await driver.retryConnect();
+            expect(global.navigator.bluetooth.requestDevice).not.toHaveBeenCalled();
+        });
+
+        it('saves device id and name to localStorage on success', async () => {
+            const service = makeService('0000ffe0-0000-1000-8000-00805f9b34fb', [
+                makeCharacteristic('0000ffe1-0000-1000-8000-00805f9b34fb', { write: true, notify: true }),
+            ]);
+            driver.device = makeWorkingDevice([service], { id: 'retry-id', name: 'Retry Reader' });
+            await driver.retryConnect();
+            expect(global.localStorage.getItem('bleDeviceId')).toBe('retry-id');
+            expect(global.localStorage.getItem('bleDeviceName')).toBe('Retry Reader');
+        });
+
+        it('throws and does not update localStorage when establishConnection() fails', async () => {
+            driver.device = makeWorkingDevice([]); // no ffe services → no usable characteristics
+            await expect(driver.retryConnect()).rejects.toThrow();
+            expect(global.localStorage.getItem('bleDeviceId')).toBeNull();
         });
     });
 
@@ -380,12 +421,18 @@ describe('BleDriver Connection Lifecycle', () => {
             expect(await driver.tryAutoConnect()).toBe(true);
         });
 
-        it('returns false and does not throw when establishConnection() rejects', async () => {
+        it('throws when the device is found but establishConnection() fails', async () => {
             global.localStorage.setItem('bleDeviceId', 'abc-123');
             global.navigator.bluetooth.getDevices.mockResolvedValue([
                 makeWorkingDevice([], { id: 'abc-123' }),
             ]);
             vi.spyOn(driver, 'establishConnection').mockRejectedValue(new Error('No usable characteristics found'));
+            await expect(driver.tryAutoConnect()).rejects.toThrow('No usable characteristics found');
+        });
+
+        it('returns false when getDevices() itself throws', async () => {
+            global.localStorage.setItem('bleDeviceId', 'abc-123');
+            global.navigator.bluetooth.getDevices.mockRejectedValue(new Error('BLE unavailable'));
             expect(await driver.tryAutoConnect()).toBe(false);
         });
     });

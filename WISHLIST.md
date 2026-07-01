@@ -13,8 +13,8 @@
 - [x] **Background Resilience**: Ensure the Web Bluetooth and Timing Engine don't get throttled by Chrome's "Power Saving" features. Web Bluetooth `characteristicvaluechanged` events fire regardless of tab visibility, so no tag reads are lost. The write daemon's 250ms `setInterval` throttles to ~1s when hidden, but all queued reads flush on next fire — no data loss. `AppUI` now listens for `visibilitychange`: stops the visual clock when hidden (avoids a frozen display), restarts it on return if the race is active, and logs both transitions.
 
 ## Hardware & Connectivity
-- [x] **Persistent Device Pairing**: Save the Bluetooth device ID/info to `localStorage` to attempt auto-connection on app launch. 
-- [x] **Auto-Connect**: App should look for the last used reader and connect immediately without clicking "Connect Reader" if possible.
+- [x] **Persistent Device Pairing**: Save the Bluetooth device ID/info to `localStorage` — shows the device name on reload so the user knows which device to pick.
+- [ ] **Auto-Connect**: `navigator.bluetooth.getDevices()` (Chrome 85+) is the only Web Bluetooth path to connect without a user gesture, but confirmed non-functional on Windows Chrome for this hardware — `getDevices()` consistently returns an empty list even after a fresh `requestDevice()` grant. No JS workaround exists. The code is in place and will activate if Chrome ever fixes this on Windows.
 
 ## Data & Synchronization
 - [x] **Dual Timestamps**: The database should store both:

@@ -96,3 +96,49 @@ describe('AppUI.updateBleBadge(): Connect/Disconnect button and Forget Device', 
         expect(document.getElementById('forgetDeviceBtn').style.display).toBe('none');
     });
 });
+
+// ─── Retry Connection button ─────────────────────────────────────────────────
+
+describe('AppUI.updateBleBadge(): Retry Connection button', () => {
+    let ui;
+
+    beforeEach(() => {
+        global.localStorage.clear();
+        loadScript('BleDriver.js');
+        const AppUI = loadScript('AppUI.js');
+        ui = Object.create(AppUI.prototype);
+        ui.driver = { device: null };
+
+        const html = fs.readFileSync(path.resolve(__dirname, '../index.html'), 'utf8');
+        const body = html.match(/<body>([\s\S]*)<\/body>/)[1].replace(/<script[\s\S]*?<\/script>/g, '');
+        document.body.innerHTML = body;
+    });
+
+    afterEach(() => {
+        global.localStorage.clear();
+    });
+
+    it('retry button is hidden when connected even if a device is selected', () => {
+        ui.driver.device = { id: 'some-device' };
+        ui.updateBleBadge('READER ONLINE', true);
+        expect(document.getElementById('retryConnectBtn').style.display).toBe('none');
+    });
+
+    it('retry button is hidden when disconnected with no device selected', () => {
+        ui.driver.device = null;
+        ui.updateBleBadge('Connection Error: failed', false);
+        expect(document.getElementById('retryConnectBtn').style.display).toBe('none');
+    });
+
+    it('retry button appears when disconnected and a device is selected', () => {
+        ui.driver.device = { id: 'some-device' };
+        ui.updateBleBadge('Connection Error: failed', false);
+        expect(document.getElementById('retryConnectBtn').style.display).not.toBe('none');
+    });
+
+    it('bluetooth toggle note appears alongside the retry button', () => {
+        ui.driver.device = { id: 'some-device' };
+        ui.updateBleBadge('Connection Error: failed', false);
+        expect(document.getElementById('retryConnectNote').style.display).not.toBe('none');
+    });
+});

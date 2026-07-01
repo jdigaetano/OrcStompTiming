@@ -23,7 +23,7 @@ class BleDriver {
 
         try {
             this.device = await navigator.bluetooth.requestDevice({
-                filters: [{ services: ['0000ffe0-0000-1000-8000-00805f9b34fb'] }],
+                acceptAllDevices: true,
                 optionalServices: [
                     "0000ffe0-0000-1000-8000-00805f9b34fb",
                     "0000ffe1-0000-1000-8000-00805f9b34fb"
@@ -46,18 +46,20 @@ class BleDriver {
         if (!savedId) return false;
         if (typeof navigator.bluetooth.getDevices !== 'function') return false;
 
+        let devices;
         try {
-            const devices = await navigator.bluetooth.getDevices();
-            const device = devices.find(d => d.id === savedId);
-            if (!device) return false;
-
-            this.device = device;
-            this.device.addEventListener('gattserverdisconnected', () => this.handleDisconnect());
-            await this.establishConnection();
-            return true;
+            devices = await navigator.bluetooth.getDevices();
         } catch (e) {
-            return false;
+            return false; // getDevices() unavailable or threw — need picker
         }
+
+        const device = devices.find(d => d.id === savedId);
+        if (!device) return false; // device not in granted list — need picker
+
+        this.device = device;
+        this.device.addEventListener('gattserverdisconnected', () => this.handleDisconnect());
+        await this.establishConnection(); // throws on GATT failure — caller handles it
+        return true;
     }
 
     // device.gatt.connect() is known to be flaky on Windows right after a scan
@@ -259,6 +261,16 @@ class BleDriver {
         localStorage.removeItem('bleDeviceId');
         localStorage.removeItem('bleDeviceName');
         if (this.device && this.device.gatt.connected) await this.device.gatt.disconnect();
+        this.device = null;
         this.updateStatus("READER OFFLINE", false);
+    }
+
+    async retryConnect() {
+        if (!this.device) throw new Error('No device selected — use Connect Reader first.');
+        this.intentionalDisconnect = false;
+        const result = await this.establishConnection();
+        localStorage.setItem('bleDeviceId', this.device.id);
+        localStorage.setItem('bleDeviceName', this.device.name || '');
+        return result;
     }
 }

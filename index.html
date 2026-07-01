@@ -86,6 +86,8 @@
         <div class="control-panel">
             <button id="connectBtn" class="btn" onclick="app.handleConnectionBtn()">Connect Reader</button>
             <button id="forgetDeviceBtn" class="btn" onclick="app.forgetDevice()" style="display:none; font-size:11px; color:#555; border-color:#555;">Forget Device</button>
+            <button id="retryConnectBtn" class="btn" onclick="app.handleRetryBtn()" style="display:none; color:orange; border-color:orange;">Retry Connection</button>
+            <div id="retryConnectNote" style="display:none; font-size:11px; color:var(--text-dim); margin-top:4px;">If still failing: toggle Bluetooth off/on in Windows Settings, then retry.</div>
             <button id="startRaceBtn" class="btn" style="color: gold; border-color: gold;" onclick="app.toggleRace()" disabled>Start Clock</button>
             <button id="exportBtn" class="btn" onclick="app.exportCsv()">Export Standings CSV</button>
             <button id="resetRaceBtn" class="btn btn-danger" onclick="app.resetRace()">Reset Race Data</button>

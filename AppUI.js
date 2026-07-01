@@ -81,11 +81,14 @@ class AppUI {
         if (localStorage.getItem('bleDeviceId')) {
             const savedName = localStorage.getItem('bleDeviceName') || 'saved reader';
             this.sysLog(`SYSTEM: "${savedName}" was previously connected — attempting auto-connect...`);
-            this.driver.tryAutoConnect().then(ok => {
-                if (!ok) this.sysLog('SYSTEM: Auto-connect failed. Click "Connect Reader" to pair manually.');
-            }).catch(() => {
-                this.sysLog('SYSTEM: Auto-connect failed. Click "Connect Reader" to pair manually.');
-            });
+            this.driver.tryAutoConnect()
+                .then(ok => {
+                    if (!ok) this.sysLog('SYSTEM: Saved reader not found — click "Connect Reader" to pair.');
+                })
+                .catch(() => {
+                    // Device was found but GATT failed — retry button is now visible
+                    this.sysLog('SYSTEM: Auto-connect failed — click "Retry Connection" above, or toggle Bluetooth off/on first.');
+                });
         }
     }
 
@@ -152,6 +155,20 @@ class AppUI {
         if (forgetBtn) {
             const hasSaved = !!localStorage.getItem('bleDeviceId');
             forgetBtn.style.display = (!connected && hasSaved) ? '' : 'none';
+        }
+
+        const hasDeviceSelected = !!(this.driver && this.driver.device);
+        const retryBtn = document.getElementById('retryConnectBtn');
+        const retryNote = document.getElementById('retryConnectNote');
+        if (retryBtn) retryBtn.style.display = (!connected && hasDeviceSelected) ? '' : 'none';
+        if (retryNote) retryNote.style.display = (!connected && hasDeviceSelected) ? '' : 'none';
+    }
+
+    async handleRetryBtn() {
+        try {
+            await this.driver.retryConnect();
+        } catch (e) {
+            // Error is surfaced via driver.onStatusChange → updateBleBadge
         }
     }
 

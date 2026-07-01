@@ -1,4 +1,4 @@
-const CACHE_NAME = 'orc-stomp-v1.4.0'; // BUMP VERSION
+const CACHE_NAME = 'orc-stomp-v1.4.4';
 const ASSETS = [
   './',
   './index.html',
@@ -37,11 +37,18 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Fetch Event - Serve from cache, then network
+// Fetch Event - Network first, fall back to cache when offline.
+// This means changes are always picked up immediately when the server is
+// reachable, with no version-bumping required. Cache is only used when
+// the network is unavailable (the actual offline PWA scenario).
 self.addEventListener('fetch', (event) => {
   event.respondWith(
-    caches.match(event.request).then((response) => {
-      return response || fetch(event.request);
-    })
+    fetch(event.request)
+      .then((response) => {
+        const clone = response.clone();
+        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+        return response;
+      })
+      .catch(() => caches.match(event.request))
   );
 });
