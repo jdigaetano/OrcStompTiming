@@ -35,7 +35,31 @@ class BleDriver {
         }
 
         this.device.addEventListener('gattserverdisconnected', () => this.handleDisconnect());
-        return await this.establishConnection();
+        const result = await this.establishConnection();
+        localStorage.setItem('bleDeviceId', this.device.id);
+        localStorage.setItem('bleDeviceName', this.device.name || '');
+        return result;
+    }
+
+    async tryAutoConnect() {
+        const savedId = localStorage.getItem('bleDeviceId');
+        if (!savedId) return false;
+        if (typeof navigator.bluetooth.getDevices !== 'function') return false;
+
+        let devices;
+        try {
+            devices = await navigator.bluetooth.getDevices();
+        } catch (e) {
+            return false; // getDevices() unavailable or threw — need picker
+        }
+
+        const device = devices.find(d => d.id === savedId);
+        if (!device) return false; // device not in granted list — need picker
+
+        this.device = device;
+        this.device.addEventListener('gattserverdisconnected', () => this.handleDisconnect());
+        await this.establishConnection(); // throws on GATT failure — caller handles it
+        return true;
     }
 
     // device.gatt.connect() is known to be flaky on Windows right after a scan
@@ -86,6 +110,10 @@ class BleDriver {
 
             if (!this.notifyCharacteristic) this.notifyCharacteristic = this.writeCharacteristic;
             if (!this.writeCharacteristic) this.writeCharacteristic = this.notifyCharacteristic;
+
+            if (!this.notifyCharacteristic && !this.writeCharacteristic) {
+                throw new Error('No usable characteristics found — is this the right device?');
+            }
 
             if (this.notifyCharacteristic && this.notifyCharacteristic.properties.notify) {
                 this.updateStatus("Starting Notifications...", false);
@@ -230,7 +258,19 @@ class BleDriver {
     async disconnect() {
         this.intentionalDisconnect = true;
         this.isAutoReconnecting = false;
+        localStorage.removeItem('bleDeviceId');
+        localStorage.removeItem('bleDeviceName');
         if (this.device && this.device.gatt.connected) await this.device.gatt.disconnect();
+        this.device = null;
         this.updateStatus("READER OFFLINE", false);
+    }
+
+    async retryConnect() {
+        if (!this.device) throw new Error('No device selected — use Connect Reader first.');
+        this.intentionalDisconnect = false;
+        const result = await this.establishConnection();
+        localStorage.setItem('bleDeviceId', this.device.id);
+        localStorage.setItem('bleDeviceName', this.device.name || '');
+        return result;
     }
 }

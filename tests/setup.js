@@ -21,4 +21,5 @@ global.localStorage = localStorageMock;
 // Mock navigator.bluetooth
 global.navigator.bluetooth = {
     requestDevice: vi.fn(),
+    getDevices: vi.fn().mockResolvedValue([]),
 };
