@@ -201,13 +201,165 @@ class AppUI {
         return tab && tab.classList.contains('active');
     }
 
-    fillKioskForm(tag) {
+    async fillKioskForm(tag) {
         const input = document.getElementById('formChipHex');
         if (input) {
             input.value = tag;
             document.getElementById('formBibNum').focus();
         }
         this.flashPing();
+        await this.refreshMappingFormState();
+    }
+
+    // Normalizes chipHex/bibNum the same way TimingEngine.saveMapping() does, then
+    // checks the pair against the current chip_map for either side already existing.
+    checkMappingConflicts(chipHexRaw, bibNumRaw, maps) {
+        const chip = (chipHexRaw || '').toUpperCase().trim();
+        const parsedBib = parseInt(bibNumRaw, 10);
+        const bib = Number.isNaN(parsedBib) ? null : parsedBib;
+
+        const chipConflict = maps.find(m => m.chip_hex === chip) || null;
+        const bibConflict = (bib !== null)
+            ? (maps.find(m => m.bib_num === bib && m.chip_hex !== chip) || null)
+            : null;
+        const isNoOp = !!(chipConflict && bib !== null && chipConflict.bib_num === bib);
+
+        return { chipConflict, bibConflict, isNoOp };
+    }
+
+    // Factual description of what a reassignment would overwrite — reused as both
+    // the on-screen warning label and (with a question appended) the confirm() prompt.
+    buildReassignConfirmMessage(conflicts, chipHex, bibNum) {
+        const chip = (chipHex || '').toUpperCase().trim();
+        const parts = [];
+        if (conflicts.chipConflict) {
+            parts.push(`Chip ${chip} is already mapped to Bib ${conflicts.chipConflict.bib_num}.`);
+        }
+        if (conflicts.bibConflict) {
+            parts.push(`Bib ${bibNum} is already assigned to Chip ${conflicts.bibConflict.chip_hex}.`);
+        }
+        return parts.join(' ');
+    }
+
+    async submitMapping(chipHexRaw, bibNumRaw) {
+        const maps = await this.engine.getMappings();
+        const conflicts = this.checkMappingConflicts(chipHexRaw, bibNumRaw, maps);
+        const hasConflict = (conflicts.chipConflict || conflicts.bibConflict) && !conflicts.isNoOp;
+
+        if (hasConflict) {
+            const message = `${this.buildReassignConfirmMessage(conflicts, chipHexRaw, bibNumRaw)} Reassigning will overwrite the existing mapping(s). Continue?`;
+            if (!confirm(message)) return false;
+        }
+
+        await this.engine.saveMapping(chipHexRaw, bibNumRaw);
+        // A bib steal only overwrites the incoming chip's row (chip_map is keyed by
+        // chip_hex) — without this, the losing chip would keep its old mapping and
+        // the bib would end up on two chips at once. Delete its row outright.
+        if (conflicts.bibConflict) {
+            await this.engine.deleteMapping(conflicts.bibConflict.chip_hex);
+        }
+        return true;
+    }
+
+    async refreshMappingFormState() {
+        const chipInput = document.getElementById('formChipHex');
+        const bibInput = document.getElementById('formBibNum');
+        const warningEl = document.getElementById('mappingConflictWarning');
+        const submitBtn = document.getElementById('mappingSubmitBtn');
+        if (!chipInput || !bibInput || !warningEl || !submitBtn) return;
+
+        const maps = await this.engine.getMappings();
+        const conflicts = this.checkMappingConflicts(chipInput.value, bibInput.value, maps);
+        const hasConflict = (conflicts.chipConflict || conflicts.bibConflict) && !conflicts.isNoOp;
+
+        if (hasConflict) {
+            warningEl.textContent = `ALREADY MAPPED — ${this.buildReassignConfirmMessage(conflicts, chipInput.value, bibInput.value)}`;
+            warningEl.style.display = '';
+            submitBtn.textContent = 'REASSIGN';
+        } else {
+            warningEl.style.display = 'none';
+            submitBtn.textContent = 'Register Mapping';
+        }
+    }
+
+    // Parses a chip-map CSV into {chip_hex, bib_num, line} rows, normalized the
+    // same way saveMapping() normalizes them. `line` is the 1-indexed position in
+    // the original file (matching what a user sees in a text editor/spreadsheet),
+    // so conflict reports can point back at the source file.
+    parseChipMapCsv(text) {
+        const rows = [];
+        text.split('\n').forEach((rawLine, idx) => {
+            const line = rawLine.trim();
+            if (!line) return;
+            const [hex, bib] = line.split(',').map(s => s.trim());
+            if (!hex || !bib || hex.toUpperCase() === 'CHIPHEX') return;
+            rows.push({ chip_hex: hex.toUpperCase().trim(), bib_num: parseInt(bib, 10), line: idx + 1 });
+        });
+        return rows;
+    }
+
+    // Internal-consistency check for a parsed CSV, before it ever touches chip_map.
+    findCsvConflicts(rows) {
+        const chipGroups = new Map();
+        const bibGroups = new Map();
+        rows.forEach(r => {
+            if (!chipGroups.has(r.chip_hex)) chipGroups.set(r.chip_hex, []);
+            chipGroups.get(r.chip_hex).push(r);
+            if (!bibGroups.has(r.bib_num)) bibGroups.set(r.bib_num, []);
+            bibGroups.get(r.bib_num).push(r);
+        });
+
+        const duplicateChips = [...chipGroups.entries()]
+            .filter(([, group]) => group.length > 1)
+            .map(([chip_hex, group]) => ({ chip_hex, lines: group.map(g => g.line) }));
+
+        const duplicateBibs = [...bibGroups.entries()]
+            .filter(([, group]) => new Set(group.map(g => g.chip_hex)).size > 1)
+            .map(([bib_num, group]) => ({ bib_num, chip_hexes: group.map(g => g.chip_hex), lines: group.map(g => g.line) }));
+
+        return { duplicateChips, duplicateBibs };
+    }
+
+    buildCsvConflictReport(conflicts) {
+        const parts = [];
+        conflicts.duplicateChips.forEach(c => {
+            parts.push(`Chip ${c.chip_hex} appears on lines ${c.lines.join(', ')}.`);
+        });
+        conflicts.duplicateBibs.forEach(b => {
+            parts.push(`Bib ${b.bib_num} is assigned to multiple chips (${b.chip_hexes.join(', ')}) on lines ${b.lines.join(', ')}.`);
+        });
+        return parts.join(' ');
+    }
+
+    // Bulk CSV import is a full replace, not a merge — deliberately refuses to
+    // touch chip_map at all if the file is internally inconsistent or empty.
+    async submitChipMapImport(text) {
+        const rows = this.parseChipMapCsv(text);
+        if (rows.length === 0) {
+            alert('No valid mappings found in file — import aborted, existing registry unchanged.');
+            return { imported: false, count: 0 };
+        }
+
+        const conflicts = this.findCsvConflicts(rows);
+        if (conflicts.duplicateChips.length || conflicts.duplicateBibs.length) {
+            alert(`Import refused — this file has internal conflicts that must be fixed first. ${this.buildCsvConflictReport(conflicts)}`);
+            return { imported: false, count: 0 };
+        }
+
+        const proceed = confirm(`This will replace the ENTIRE chip registry with the ${rows.length} mapping(s) in this file. Any existing mappings not in the file will be deleted. Continue?`);
+        if (!proceed) return { imported: false, count: 0 };
+
+        await this.engine.replaceChipMap(rows);
+        return { imported: true, count: rows.length };
+    }
+
+    escapeHtml(str) {
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     flashPing() {
@@ -392,9 +544,9 @@ class AppUI {
         }
         tbody.innerHTML = list.map(item => `
             <tr>
-                <td>${item.chip_hex}</td>
-                <td style="color:var(--accent); font-weight:bold;">${item.bib_num}</td>
-                <td><button class="btn btn-danger" style="padding:4px 8px; font-size:10px;" onclick="app.deleteMapping('${item.chip_hex}')">Remove</button></td>
+                <td>${this.escapeHtml(item.chip_hex)}</td>
+                <td style="color:var(--accent); font-weight:bold;">${this.escapeHtml(item.bib_num)}</td>
+                <td><button class="btn btn-danger" style="padding:4px 8px; font-size:10px;" onclick="app.deleteMapping('${this.escapeHtml(item.chip_hex)}')">Remove</button></td>
             </tr>
         `).join('');
     }

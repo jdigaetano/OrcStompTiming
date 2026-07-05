@@ -99,13 +99,29 @@ class TimingEngine {
     async saveMapping(chipHex, bibNum) {
         if (!this.db) throw new Error("Database not initialized");
         const tx = this.db.transaction(['chip_map'], 'readwrite');
-        tx.objectStore('chip_map').put({ chip_hex: chipHex.toUpperCase().trim(), bib_num: bibNum });
+        tx.objectStore('chip_map').put({ chip_hex: chipHex.toUpperCase().trim(), bib_num: parseInt(bibNum, 10) });
         return new Promise(r => tx.oncomplete = r);
     }
 
     async getMappings() {
         if (!this.db) return [];
         return this.getAllFromStore('chip_map');
+    }
+
+    async deleteMapping(chipHex) {
+        if (!this.db) throw new Error("Database not initialized");
+        const tx = this.db.transaction(['chip_map'], 'readwrite');
+        tx.objectStore('chip_map').delete(chipHex.toUpperCase().trim());
+        return new Promise(r => tx.oncomplete = r);
+    }
+
+    async replaceChipMap(mappings) {
+        if (!this.db) throw new Error("Database not initialized");
+        const tx = this.db.transaction(['chip_map'], 'readwrite');
+        const store = tx.objectStore('chip_map');
+        store.clear();
+        mappings.forEach(m => store.put({ chip_hex: m.chip_hex.toUpperCase().trim(), bib_num: parseInt(m.bib_num, 10) }));
+        return new Promise(r => tx.oncomplete = r);
     }
 
     async clearRaceData() {

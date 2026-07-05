@@ -136,15 +136,16 @@
             <div>
                 <h3>Add Assignment</h3>
                 <form id="mappingForm" onsubmit="app.saveMapping(event)">
+                    <div id="mappingConflictWarning" style="display:none; background:#2b1a0a; border:1px solid #ff8800; color:#ffaa55; font-weight:bold; padding:10px; margin-bottom:10px; border-radius:4px;"></div>
                     <div class="form-group">
                         <label for="formChipHex" style="color: var(--data);">Scanned Chip HEX Code</label>
-                        <input type="text" id="formChipHex" required placeholder="Wave a tag or paste code..." autocomplete="off">
+                        <input type="text" id="formChipHex" required placeholder="Wave a tag or paste code..." autocomplete="off" oninput="app.refreshMappingFormState()">
                     </div>
                     <div class="form-group">
                         <label for="formBibNum">Assign Bib Number</label>
-                        <input type="number" id="formBibNum" required placeholder="e.g., 104" autocomplete="off">
+                        <input type="number" id="formBibNum" required placeholder="e.g., 104" autocomplete="off" oninput="app.refreshMappingFormState()">
                     </div>
-                    <button type="submit" class="btn">Register Mapping</button>
+                    <button type="submit" id="mappingSubmitBtn" class="btn">Register Mapping</button>
                 </form>
                 <hr style="border:0; border-top:1px solid #333; margin: 30px 0;">
 
@@ -342,15 +343,17 @@
             e.preventDefault();
             const hex = document.getElementById('formChipHex').value;
             const bib = document.getElementById('formBibNum').value;
-            await engine.saveMapping(hex, bib);
-            document.getElementById('mappingForm').reset();
-            app.renderMappingTable();
+            const saved = await app.submitMapping(hex, bib);
+            if (saved) {
+                document.getElementById('mappingForm').reset();
+                app.renderMappingTable();
+                app.refreshMappingFormState();
+            }
         };
 
         app.deleteMapping = async (hex) => {
-            const tx = engine.db.transaction(['chip_map'], 'readwrite');
-            tx.objectStore('chip_map').delete(hex);
-            tx.oncomplete = () => app.renderMappingTable();
+            await engine.deleteMapping(hex);
+            app.renderMappingTable();
         };
 
         app.resetRace = async () => {
@@ -399,17 +402,13 @@
             const file = event.target.files[0];
             if (!file) return;
             const text = await file.text();
-            const lines = text.split('\n').filter(l => l.trim() !== '');
-            let count = 0;
-            for (let line of lines) {
-                const [hex, bib] = line.split(',').map(s => s.trim());
-                if (hex && bib && hex.toUpperCase() !== "CHIPHEX") {
-                    await engine.saveMapping(hex, parseInt(bib, 10));
-                    count++;
-                }
+            const result = await app.submitChipMapImport(text);
+            if (result.imported) {
+                alert(`Imported ${result.count} mapping(s). Existing registry replaced.`);
+                app.renderMappingTable();
+                app.refreshMappingFormState();
             }
-            alert(`Imported ${count} mappings.`);
-            app.renderMappingTable();
+            event.target.value = '';
         };
 
         app.reconcileChips = async (event) => {
