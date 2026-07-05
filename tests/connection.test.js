@@ -88,7 +88,7 @@ describe('BleDriver Connection Lifecycle', () => {
             expect(driver.intentionalDisconnect).toBe(false);
         });
 
-        it('uses acceptAllDevices with optionalServices (ffe0 service filter excluded real hardware from picker)', async () => {
+        it('uses acceptAllDevices with optionalServices when no device is saved (ffe0 service filter excluded real hardware from picker)', async () => {
             const service = makeService('0000ffe0-0000-1000-8000-00805f9b34fb', [
                 makeCharacteristic('0000ffe1-0000-1000-8000-00805f9b34fb', { write: true, notify: true }),
             ]);
@@ -99,6 +99,35 @@ describe('BleDriver Connection Lifecycle', () => {
             expect(callArgs.filters).toBeUndefined();
             expect(callArgs.optionalServices).toContain('0000ffe0-0000-1000-8000-00805f9b34fb');
             expect(callArgs.optionalServices).toContain('0000ffe1-0000-1000-8000-00805f9b34fb');
+        });
+
+        it('scopes the picker to a name filter for the last known device when one is saved, instead of acceptAllDevices', async () => {
+            global.localStorage.setItem('bleDeviceName', 'MyReader');
+            const service = makeService('0000ffe0-0000-1000-8000-00805f9b34fb', [
+                makeCharacteristic('0000ffe1-0000-1000-8000-00805f9b34fb', { write: true, notify: true }),
+            ]);
+            global.navigator.bluetooth.requestDevice.mockResolvedValue(
+                makeWorkingDevice([service], { name: 'MyReader' })
+            );
+            await driver.connect();
+            const callArgs = global.navigator.bluetooth.requestDevice.mock.calls[0][0];
+            expect(callArgs.filters).toEqual([{ name: 'MyReader' }]);
+            expect(callArgs.acceptAllDevices).toBeUndefined();
+            expect(callArgs.optionalServices).toContain('0000ffe0-0000-1000-8000-00805f9b34fb');
+            expect(callArgs.optionalServices).toContain('0000ffe1-0000-1000-8000-00805f9b34fb');
+        });
+
+        it('falls back to showing all devices again once the saved device is forgotten', async () => {
+            global.localStorage.setItem('bleDeviceName', 'MyReader');
+            await driver.disconnect(); // "Forget Device" clears bleDeviceId/bleDeviceName
+            const service = makeService('0000ffe0-0000-1000-8000-00805f9b34fb', [
+                makeCharacteristic('0000ffe1-0000-1000-8000-00805f9b34fb', { write: true, notify: true }),
+            ]);
+            global.navigator.bluetooth.requestDevice.mockResolvedValue(makeWorkingDevice([service]));
+            await driver.connect();
+            const callArgs = global.navigator.bluetooth.requestDevice.mock.calls[0][0];
+            expect(callArgs.acceptAllDevices).toBe(true);
+            expect(callArgs.filters).toBeUndefined();
         });
 
         it('saves the device id to localStorage after a successful connection', async () => {

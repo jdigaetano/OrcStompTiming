@@ -21,14 +21,20 @@ class BleDriver {
         this.intentionalDisconnect = false;
         this.updateStatus("Requesting Device...", false);
 
+        const optionalServices = [
+            "0000ffe0-0000-1000-8000-00805f9b34fb",
+            "0000ffe1-0000-1000-8000-00805f9b34fb"
+        ];
+        // If we've successfully connected to a named device before, scope the
+        // picker to just that name instead of showing every BLE device in range.
+        // "Forget Device" clears bleDeviceName, which reopens this to everyone.
+        const savedName = localStorage.getItem('bleDeviceName');
+        const requestOptions = savedName
+            ? { filters: [{ name: savedName }], optionalServices }
+            : { acceptAllDevices: true, optionalServices };
+
         try {
-            this.device = await navigator.bluetooth.requestDevice({
-                acceptAllDevices: true,
-                optionalServices: [
-                    "0000ffe0-0000-1000-8000-00805f9b34fb",
-                    "0000ffe1-0000-1000-8000-00805f9b34fb"
-                ]
-            });
+            this.device = await navigator.bluetooth.requestDevice(requestOptions);
         } catch (error) {
             this.updateStatus(`Discovery Error: ${error.message}`, false);
             throw error;
