@@ -38,3 +38,15 @@
     3. **Explicitly deferred** — flag it and get a decision from the User; never leave a new failure unexplained or silently ignored.
 - A test suite that exists but isn't run compulsively after every change provides zero protection — the discipline is in the *checking*, not just the tests' existence.
 - Exception: fixing a test that's wrong/stale isn't gated by the "before" half the same way, since the test itself isn't production code — but its staleness must still be justified (against the spec or real behavior), not just edited until green.
+
+## 8. Race-Day Redundancy Plan (2026-07-05, per Tony)
+This chip/reader system is the **primary** timing method, but is not yet trusted enough to run without a human safety net. Until that confidence is earned, races also run with:
+- **A camera recording the finish line with a real-time timestamp overlay** — lets a human reconstruct order/time from video if chip data is missing or wrong for a bib. This is also why `race_reads` stores both elapsed race time *and* wall-clock ISO time (see WISHLIST.md "Dual Timestamps") — the wall clock is what lines up against the camera's overlay.
+- **A dedicated track timing device**, run independently as a second electronic backup.
+- **A barcode scanner at the finish chute**, scanning each bib as runners pass, as a final manual order-of-finish backup.
+
+This is deliberately transitional — a belt-and-suspenders setup for early races while confidence in the chip/camera system is built, not a permanent four-system requirement. Backup layers should be dropped incrementally as trust in the primary system grows, not all at once.
+
+**Not yet addressed, worth deciding before relying on this in a real dispute:**
+- **Clock sync across all four systems.** If the reader, camera overlay, track timing device, and barcode scanner aren't correlated to a common time reference, reconciling a discrepancy after the race is guesswork. Worth syncing all clocks to the same source before the race, and/or using a clear shared sync event (e.g. the starting gun, audible/visible on camera, correlated with the moment "Start Race" is pressed in the app).
+- **Barcode scanner throughput during a bunched finish.** A single operator scanning bibs one at a time may not keep up when many runners cross within seconds of each other (common at the front of a pack or a sprint finish) — a real limitation of that layer, not fixable in software, worth knowing about since it's the last fallback in the chain.

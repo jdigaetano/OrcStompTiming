@@ -71,7 +71,9 @@
     <div style="display: flex; justify-content: space-between; align-items: baseline;">
         <h2>UHF RFID Offline Timing Deck</h2>
         <div>
-            <button id="mockToggleBtn" class="btn" style="padding: 4px 8px; font-size: 10px; border-color: #555; color: #555;" onclick="app.toggleMockMode()">ENABLE MOCK MODE</button>
+            <button id="chooseBackupBtn" class="btn" style="padding: 4px 8px; font-size: 10px; border-color: #555; color: #555;" onclick="app.chooseBackupLocation()">CHOOSE BACKUP LOCATION</button>
+            <span id="backupLocationLabel" style="color: var(--text-dim); font-size: 10px; margin-left: 8px;">No backup location set</span>
+            <button id="mockToggleBtn" class="btn" style="padding: 4px 8px; font-size: 10px; border-color: #555; color: #555; margin-left: 10px;" onclick="app.toggleMockMode()">ENABLE MOCK MODE</button>
             <span style="color: var(--text-dim); font-size: 10px; margin-left: 10px;">v1.4.0</span>
         </div>
     </div>
@@ -357,32 +359,27 @@
         };
 
         app.resetRace = async () => {
-            if (confirm("Reset current race timings?")) {
+            const readCount = (await engine.getAllFromStore('race_reads')).length;
+            if (confirm(app.buildWipeConfirmMessage(readCount, 0, false))) {
+                await app.performHeavyBackup();
                 await engine.clearRaceData();
                 location.reload();
             }
         };
 
         app.nukeDatabase = async () => {
-            if (confirm("NUKE EVERYTHING? This clears chips and race logs.")) {
+            const readCount = (await engine.getAllFromStore('race_reads')).length;
+            const mappingCount = (await engine.getAllFromStore('chip_map')).length;
+            if (confirm(app.buildWipeConfirmMessage(readCount, mappingCount, true))) {
+                await app.performHeavyBackup();
                 await engine.clearAllData();
                 location.reload();
             }
         };
 
         app.exportCsv = async () => {
-            const reads = await engine.getAllFromStore('race_reads');
-            const maps = await engine.getAllFromStore('chip_map');
-            if (!reads.length) return alert("No data to export");
-            const startMs = new Date(engine.raceStartTime).getTime();
-            const results = app.buildResultsFromReads(reads, maps, startMs);
-            const csv = app.buildCsvString(results);
-            const blob = new Blob([csv], { type: 'text/csv' });
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.setAttribute('href', url);
-            a.setAttribute('download', `race-export-${Date.now()}.csv`);
-            a.click();
+            const exported = await app.downloadStandingsCsv();
+            if (!exported) alert("No data to export");
         };
 
         app.exportChipMap = async () => {

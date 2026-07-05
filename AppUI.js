@@ -2,6 +2,8 @@
  * AppUI.js
  * Responsibility: DOM Orchestration & Event Handling
  */
+const LIVE_BACKUP_INTERVAL_MS = 60000;
+
 class AppUI {
     constructor(engine, driver) {
         this.engine = engine;
@@ -66,6 +68,7 @@ class AppUI {
     }
 
     restoreState() {
+        this.restoreBackupHandle();
         if (this.engine.raceStartTime) {
             this.sysLog(`Recovered race: ${new Date(this.engine.raceStartTime).toLocaleTimeString()}`);
             this.startVisualClock();
@@ -74,6 +77,7 @@ class AppUI {
             if (wasTracking) {
                 this.engine.isTrackingRace = true;
                 this.updateRaceStatus(true);
+                this.startBackupTimer();
             }
         }
         this.renderMappingTable();
@@ -93,7 +97,7 @@ class AppUI {
     }
 
     // UI Logic Methods
-    toggleRace() {
+    async toggleRace() {
         if (!this.engine.isTrackingRace) {
             if (!this.engine.raceStartTime) {
                 this.engine.raceStartTime = new Date().toISOString();
@@ -104,13 +108,29 @@ class AppUI {
             this.startVisualClock();
             this.updateRaceStatus(true);
             this.sysLog("RACE START");
+            this.startBackupTimer();
         } else {
             this.engine.isTrackingRace = false;
             localStorage.setItem('isTrackingRace', 'false');
             this.stopVisualClock();
             this.updateRaceStatus(false);
             this.sysLog("RACE PAUSED");
+            this.stopBackupTimer();
+            await this.performHeavyBackup();
         }
+    }
+
+    // Periodic in-race backup: cheap, zero-computation raw snapshots only (see
+    // TimingEngine.getRawSnapshot). Any heavier processing happens once the clock
+    // stops, in performHeavyBackup() below — not on this recurring timer.
+    startBackupTimer() {
+        if (this.backupInterval) clearInterval(this.backupInterval);
+        this.backupInterval = setInterval(() => this.performLiveBackup(), LIVE_BACKUP_INTERVAL_MS);
+    }
+
+    stopBackupTimer() {
+        if (this.backupInterval) clearInterval(this.backupInterval);
+        this.backupInterval = null;
     }
 
     startVisualClock() {
@@ -531,6 +551,106 @@ class AppUI {
             csv += `"${r.bib}","${r.elapsed}","${r.wallClock}","${hex}"\n`;
         });
         return csv;
+    }
+
+    // Computes and downloads the standings CSV (same logic previously inline as
+    // index.html's app.exportCsv). Returns false without downloading anything if
+    // there's no data yet — used both by the manual "Export" button and by
+    // performHeavyBackup(), where an empty race shouldn't produce a spurious file.
+    async downloadStandingsCsv() {
+        const reads = await this.engine.getAllFromStore('race_reads');
+        if (!reads.length) return false;
+        const maps = await this.engine.getAllFromStore('chip_map');
+        const startMs = new Date(this.engine.raceStartTime).getTime();
+        const results = this.buildResultsFromReads(reads, maps, startMs);
+        const csv = this.buildCsvString(results);
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.setAttribute('href', url);
+        a.setAttribute('download', `race-export-${Date.now()}.csv`);
+        a.click();
+        return true;
+    }
+
+    // Writes a complete snapshot to a previously-chosen file handle, overwriting
+    // it in full each time (not an append/patch) — see TimingEngine.getRawSnapshot.
+    async writeSnapshotToFile(handle, snapshot) {
+        const writable = await handle.createWritable();
+        await writable.write(JSON.stringify(snapshot, null, 2));
+        await writable.close();
+    }
+
+    // Lightweight, zero-computation live backup — safe to call on a recurring
+    // timer while the race clock is running. No-ops if no backup location is set.
+    async performLiveBackup() {
+        if (!this.backupHandle) return false;
+        const snapshot = await this.engine.getRawSnapshot();
+        await this.writeSnapshotToFile(this.backupHandle, snapshot);
+        return true;
+    }
+
+    // Runs once the clock has stopped (or right before a destructive reset/nuke):
+    // a fresh raw snapshot, plus the heavier computed standings CSV — both "free"
+    // now that the race isn't live.
+    async performHeavyBackup() {
+        await this.performLiveBackup();
+        await this.downloadStandingsCsv();
+    }
+
+    buildWipeConfirmMessage(readCount, mappingCount, includeMappings) {
+        let message = `This will permanently delete ${readCount} race read(s)`;
+        if (includeMappings) message += ` and ${mappingCount} chip-to-bib mapping(s)`;
+        message += '. A backup will be saved first. Continue?';
+        return message;
+    }
+
+    updateBackupLabel(name) {
+        const el = document.getElementById('backupLocationLabel');
+        if (!el) return;
+        el.textContent = name ? `Backing up to: ${name}` : 'No backup location set';
+    }
+
+    // One-time picker (browser security requires a user gesture to grant
+    // filesystem access at all — there's no way to pick a location silently).
+    // The resulting handle is persisted so restoreBackupHandle() can reuse it
+    // silently on every later page load.
+    async chooseBackupLocation() {
+        if (typeof window.showSaveFilePicker !== 'function') {
+            alert("Live backups need a Chromium browser (Chrome/Edge) — this browser doesn't support choosing a backup file.");
+            return false;
+        }
+        try {
+            const handle = await window.showSaveFilePicker({
+                suggestedName: 'orcstomp-backup.json',
+                startIn: 'documents',
+                types: [{ description: 'JSON backup', accept: { 'application/json': ['.json'] } }],
+            });
+            this.backupHandle = handle;
+            await this.engine.saveBackupHandle(handle);
+            this.updateBackupLabel(handle.name);
+            return true;
+        } catch (e) {
+            if (e.name === 'AbortError') return false; // user cancelled the picker — not an error
+            alert(`Couldn't set up the backup location: ${e.message}`);
+            return false;
+        }
+    }
+
+    // Re-acquires a previously-chosen backup handle without showing the file
+    // picker again — at most a lightweight one-click permission reconfirmation.
+    async restoreBackupHandle() {
+        const handle = await this.engine.getBackupHandle();
+        if (!handle) { this.updateBackupLabel(null); return; }
+        try {
+            let perm = await handle.queryPermission({ mode: 'readwrite' });
+            if (perm !== 'granted') perm = await handle.requestPermission({ mode: 'readwrite' });
+            if (perm !== 'granted') { this.updateBackupLabel(null); return; }
+            this.backupHandle = handle;
+            this.updateBackupLabel(handle.name);
+        } catch (e) {
+            this.updateBackupLabel(null);
+        }
     }
 
     async renderMappingTable() {
