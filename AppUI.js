@@ -2,6 +2,8 @@
  * AppUI.js
  * Responsibility: DOM Orchestration & Event Handling
  */
+const LIVE_BACKUP_INTERVAL_MS = 60000;
+
 class AppUI {
     constructor(engine, driver) {
         this.engine = engine;
@@ -66,6 +68,7 @@ class AppUI {
     }
 
     restoreState() {
+        this.restoreBackupHandle();
         if (this.engine.raceStartTime) {
             this.sysLog(`Recovered race: ${new Date(this.engine.raceStartTime).toLocaleTimeString()}`);
             this.startVisualClock();
@@ -74,6 +77,7 @@ class AppUI {
             if (wasTracking) {
                 this.engine.isTrackingRace = true;
                 this.updateRaceStatus(true);
+                this.startBackupTimer();
             }
         }
         this.renderMappingTable();
@@ -93,7 +97,7 @@ class AppUI {
     }
 
     // UI Logic Methods
-    toggleRace() {
+    async toggleRace() {
         if (!this.engine.isTrackingRace) {
             if (!this.engine.raceStartTime) {
                 this.engine.raceStartTime = new Date().toISOString();
@@ -104,13 +108,29 @@ class AppUI {
             this.startVisualClock();
             this.updateRaceStatus(true);
             this.sysLog("RACE START");
+            this.startBackupTimer();
         } else {
             this.engine.isTrackingRace = false;
             localStorage.setItem('isTrackingRace', 'false');
             this.stopVisualClock();
             this.updateRaceStatus(false);
             this.sysLog("RACE PAUSED");
+            this.stopBackupTimer();
+            await this.performHeavyBackup();
         }
+    }
+
+    // Periodic in-race backup: cheap, zero-computation raw snapshots only (see
+    // TimingEngine.getRawSnapshot). Any heavier processing happens once the clock
+    // stops, in performHeavyBackup() below — not on this recurring timer.
+    startBackupTimer() {
+        if (this.backupInterval) clearInterval(this.backupInterval);
+        this.backupInterval = setInterval(() => this.performLiveBackup(), LIVE_BACKUP_INTERVAL_MS);
+    }
+
+    stopBackupTimer() {
+        if (this.backupInterval) clearInterval(this.backupInterval);
+        this.backupInterval = null;
     }
 
     startVisualClock() {
@@ -201,13 +221,165 @@ class AppUI {
         return tab && tab.classList.contains('active');
     }
 
-    fillKioskForm(tag) {
+    async fillKioskForm(tag) {
         const input = document.getElementById('formChipHex');
         if (input) {
             input.value = tag;
             document.getElementById('formBibNum').focus();
         }
         this.flashPing();
+        await this.refreshMappingFormState();
+    }
+
+    // Normalizes chipHex/bibNum the same way TimingEngine.saveMapping() does, then
+    // checks the pair against the current chip_map for either side already existing.
+    checkMappingConflicts(chipHexRaw, bibNumRaw, maps) {
+        const chip = (chipHexRaw || '').toUpperCase().trim();
+        const parsedBib = parseInt(bibNumRaw, 10);
+        const bib = Number.isNaN(parsedBib) ? null : parsedBib;
+
+        const chipConflict = maps.find(m => m.chip_hex === chip) || null;
+        const bibConflict = (bib !== null)
+            ? (maps.find(m => m.bib_num === bib && m.chip_hex !== chip) || null)
+            : null;
+        const isNoOp = !!(chipConflict && bib !== null && chipConflict.bib_num === bib);
+
+        return { chipConflict, bibConflict, isNoOp };
+    }
+
+    // Factual description of what a reassignment would overwrite — reused as both
+    // the on-screen warning label and (with a question appended) the confirm() prompt.
+    buildReassignConfirmMessage(conflicts, chipHex, bibNum) {
+        const chip = (chipHex || '').toUpperCase().trim();
+        const parts = [];
+        if (conflicts.chipConflict) {
+            parts.push(`Chip ${chip} is already mapped to Bib ${conflicts.chipConflict.bib_num}.`);
+        }
+        if (conflicts.bibConflict) {
+            parts.push(`Bib ${bibNum} is already assigned to Chip ${conflicts.bibConflict.chip_hex}.`);
+        }
+        return parts.join(' ');
+    }
+
+    async submitMapping(chipHexRaw, bibNumRaw) {
+        const maps = await this.engine.getMappings();
+        const conflicts = this.checkMappingConflicts(chipHexRaw, bibNumRaw, maps);
+        const hasConflict = (conflicts.chipConflict || conflicts.bibConflict) && !conflicts.isNoOp;
+
+        if (hasConflict) {
+            const message = `${this.buildReassignConfirmMessage(conflicts, chipHexRaw, bibNumRaw)} Reassigning will overwrite the existing mapping(s). Continue?`;
+            if (!confirm(message)) return false;
+        }
+
+        await this.engine.saveMapping(chipHexRaw, bibNumRaw);
+        // A bib steal only overwrites the incoming chip's row (chip_map is keyed by
+        // chip_hex) — without this, the losing chip would keep its old mapping and
+        // the bib would end up on two chips at once. Delete its row outright.
+        if (conflicts.bibConflict) {
+            await this.engine.deleteMapping(conflicts.bibConflict.chip_hex);
+        }
+        return true;
+    }
+
+    async refreshMappingFormState() {
+        const chipInput = document.getElementById('formChipHex');
+        const bibInput = document.getElementById('formBibNum');
+        const warningEl = document.getElementById('mappingConflictWarning');
+        const submitBtn = document.getElementById('mappingSubmitBtn');
+        if (!chipInput || !bibInput || !warningEl || !submitBtn) return;
+
+        const maps = await this.engine.getMappings();
+        const conflicts = this.checkMappingConflicts(chipInput.value, bibInput.value, maps);
+        const hasConflict = (conflicts.chipConflict || conflicts.bibConflict) && !conflicts.isNoOp;
+
+        if (hasConflict) {
+            warningEl.textContent = `ALREADY MAPPED — ${this.buildReassignConfirmMessage(conflicts, chipInput.value, bibInput.value)}`;
+            warningEl.style.display = '';
+            submitBtn.textContent = 'REASSIGN';
+        } else {
+            warningEl.style.display = 'none';
+            submitBtn.textContent = 'Register Mapping';
+        }
+    }
+
+    // Parses a chip-map CSV into {chip_hex, bib_num, line} rows, normalized the
+    // same way saveMapping() normalizes them. `line` is the 1-indexed position in
+    // the original file (matching what a user sees in a text editor/spreadsheet),
+    // so conflict reports can point back at the source file.
+    parseChipMapCsv(text) {
+        const rows = [];
+        text.split('\n').forEach((rawLine, idx) => {
+            const line = rawLine.trim();
+            if (!line) return;
+            const [hex, bib] = line.split(',').map(s => s.trim());
+            if (!hex || !bib || hex.toUpperCase() === 'CHIPHEX') return;
+            rows.push({ chip_hex: hex.toUpperCase().trim(), bib_num: parseInt(bib, 10), line: idx + 1 });
+        });
+        return rows;
+    }
+
+    // Internal-consistency check for a parsed CSV, before it ever touches chip_map.
+    findCsvConflicts(rows) {
+        const chipGroups = new Map();
+        const bibGroups = new Map();
+        rows.forEach(r => {
+            if (!chipGroups.has(r.chip_hex)) chipGroups.set(r.chip_hex, []);
+            chipGroups.get(r.chip_hex).push(r);
+            if (!bibGroups.has(r.bib_num)) bibGroups.set(r.bib_num, []);
+            bibGroups.get(r.bib_num).push(r);
+        });
+
+        const duplicateChips = [...chipGroups.entries()]
+            .filter(([, group]) => group.length > 1)
+            .map(([chip_hex, group]) => ({ chip_hex, lines: group.map(g => g.line) }));
+
+        const duplicateBibs = [...bibGroups.entries()]
+            .filter(([, group]) => new Set(group.map(g => g.chip_hex)).size > 1)
+            .map(([bib_num, group]) => ({ bib_num, chip_hexes: group.map(g => g.chip_hex), lines: group.map(g => g.line) }));
+
+        return { duplicateChips, duplicateBibs };
+    }
+
+    buildCsvConflictReport(conflicts) {
+        const parts = [];
+        conflicts.duplicateChips.forEach(c => {
+            parts.push(`Chip ${c.chip_hex} appears on lines ${c.lines.join(', ')}.`);
+        });
+        conflicts.duplicateBibs.forEach(b => {
+            parts.push(`Bib ${b.bib_num} is assigned to multiple chips (${b.chip_hexes.join(', ')}) on lines ${b.lines.join(', ')}.`);
+        });
+        return parts.join(' ');
+    }
+
+    // Bulk CSV import is a full replace, not a merge — deliberately refuses to
+    // touch chip_map at all if the file is internally inconsistent or empty.
+    async submitChipMapImport(text) {
+        const rows = this.parseChipMapCsv(text);
+        if (rows.length === 0) {
+            alert('No valid mappings found in file — import aborted, existing registry unchanged.');
+            return { imported: false, count: 0 };
+        }
+
+        const conflicts = this.findCsvConflicts(rows);
+        if (conflicts.duplicateChips.length || conflicts.duplicateBibs.length) {
+            alert(`Import refused — this file has internal conflicts that must be fixed first. ${this.buildCsvConflictReport(conflicts)}`);
+            return { imported: false, count: 0 };
+        }
+
+        const proceed = confirm(`This will replace the ENTIRE chip registry with the ${rows.length} mapping(s) in this file. Any existing mappings not in the file will be deleted. Continue?`);
+        if (!proceed) return { imported: false, count: 0 };
+
+        await this.engine.replaceChipMap(rows);
+        return { imported: true, count: rows.length };
+    }
+
+    escapeHtml(str) {
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
     }
 
     flashPing() {
@@ -381,6 +553,106 @@ class AppUI {
         return csv;
     }
 
+    // Computes and downloads the standings CSV (same logic previously inline as
+    // index.html's app.exportCsv). Returns false without downloading anything if
+    // there's no data yet — used both by the manual "Export" button and by
+    // performHeavyBackup(), where an empty race shouldn't produce a spurious file.
+    async downloadStandingsCsv() {
+        const reads = await this.engine.getAllFromStore('race_reads');
+        if (!reads.length) return false;
+        const maps = await this.engine.getAllFromStore('chip_map');
+        const startMs = new Date(this.engine.raceStartTime).getTime();
+        const results = this.buildResultsFromReads(reads, maps, startMs);
+        const csv = this.buildCsvString(results);
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.setAttribute('href', url);
+        a.setAttribute('download', `race-export-${Date.now()}.csv`);
+        a.click();
+        return true;
+    }
+
+    // Writes a complete snapshot to a previously-chosen file handle, overwriting
+    // it in full each time (not an append/patch) — see TimingEngine.getRawSnapshot.
+    async writeSnapshotToFile(handle, snapshot) {
+        const writable = await handle.createWritable();
+        await writable.write(JSON.stringify(snapshot, null, 2));
+        await writable.close();
+    }
+
+    // Lightweight, zero-computation live backup — safe to call on a recurring
+    // timer while the race clock is running. No-ops if no backup location is set.
+    async performLiveBackup() {
+        if (!this.backupHandle) return false;
+        const snapshot = await this.engine.getRawSnapshot();
+        await this.writeSnapshotToFile(this.backupHandle, snapshot);
+        return true;
+    }
+
+    // Runs once the clock has stopped (or right before a destructive reset/nuke):
+    // a fresh raw snapshot, plus the heavier computed standings CSV — both "free"
+    // now that the race isn't live.
+    async performHeavyBackup() {
+        await this.performLiveBackup();
+        await this.downloadStandingsCsv();
+    }
+
+    buildWipeConfirmMessage(readCount, mappingCount, includeMappings) {
+        let message = `This will permanently delete ${readCount} race read(s)`;
+        if (includeMappings) message += ` and ${mappingCount} chip-to-bib mapping(s)`;
+        message += '. A backup will be saved first. Continue?';
+        return message;
+    }
+
+    updateBackupLabel(name) {
+        const el = document.getElementById('backupLocationLabel');
+        if (!el) return;
+        el.textContent = name ? `Backing up to: ${name}` : 'No backup location set';
+    }
+
+    // One-time picker (browser security requires a user gesture to grant
+    // filesystem access at all — there's no way to pick a location silently).
+    // The resulting handle is persisted so restoreBackupHandle() can reuse it
+    // silently on every later page load.
+    async chooseBackupLocation() {
+        if (typeof window.showSaveFilePicker !== 'function') {
+            alert("Live backups need a Chromium browser (Chrome/Edge) — this browser doesn't support choosing a backup file.");
+            return false;
+        }
+        try {
+            const handle = await window.showSaveFilePicker({
+                suggestedName: 'orcstomp-backup.json',
+                startIn: 'documents',
+                types: [{ description: 'JSON backup', accept: { 'application/json': ['.json'] } }],
+            });
+            this.backupHandle = handle;
+            await this.engine.saveBackupHandle(handle);
+            this.updateBackupLabel(handle.name);
+            return true;
+        } catch (e) {
+            if (e.name === 'AbortError') return false; // user cancelled the picker — not an error
+            alert(`Couldn't set up the backup location: ${e.message}`);
+            return false;
+        }
+    }
+
+    // Re-acquires a previously-chosen backup handle without showing the file
+    // picker again — at most a lightweight one-click permission reconfirmation.
+    async restoreBackupHandle() {
+        const handle = await this.engine.getBackupHandle();
+        if (!handle) { this.updateBackupLabel(null); return; }
+        try {
+            let perm = await handle.queryPermission({ mode: 'readwrite' });
+            if (perm !== 'granted') perm = await handle.requestPermission({ mode: 'readwrite' });
+            if (perm !== 'granted') { this.updateBackupLabel(null); return; }
+            this.backupHandle = handle;
+            this.updateBackupLabel(handle.name);
+        } catch (e) {
+            this.updateBackupLabel(null);
+        }
+    }
+
     async renderMappingTable() {
         const list = await this.engine.getMappings();
         const tbody = document.getElementById('mappingTableBody');
@@ -392,9 +664,9 @@ class AppUI {
         }
         tbody.innerHTML = list.map(item => `
             <tr>
-                <td>${item.chip_hex}</td>
-                <td style="color:var(--accent); font-weight:bold;">${item.bib_num}</td>
-                <td><button class="btn btn-danger" style="padding:4px 8px; font-size:10px;" onclick="app.deleteMapping('${item.chip_hex}')">Remove</button></td>
+                <td>${this.escapeHtml(item.chip_hex)}</td>
+                <td style="color:var(--accent); font-weight:bold;">${this.escapeHtml(item.bib_num)}</td>
+                <td><button class="btn btn-danger" style="padding:4px 8px; font-size:10px;" onclick="app.deleteMapping('${this.escapeHtml(item.chip_hex)}')">Remove</button></td>
             </tr>
         `).join('');
     }

@@ -71,7 +71,9 @@
     <div style="display: flex; justify-content: space-between; align-items: baseline;">
         <h2>UHF RFID Offline Timing Deck</h2>
         <div>
-            <button id="mockToggleBtn" class="btn" style="padding: 4px 8px; font-size: 10px; border-color: #555; color: #555;" onclick="app.toggleMockMode()">ENABLE MOCK MODE</button>
+            <button id="chooseBackupBtn" class="btn" style="padding: 4px 8px; font-size: 10px; border-color: #555; color: #555;" onclick="app.chooseBackupLocation()">CHOOSE BACKUP LOCATION</button>
+            <span id="backupLocationLabel" style="color: var(--text-dim); font-size: 10px; margin-left: 8px;">No backup location set</span>
+            <button id="mockToggleBtn" class="btn" style="padding: 4px 8px; font-size: 10px; border-color: #555; color: #555; margin-left: 10px;" onclick="app.toggleMockMode()">ENABLE MOCK MODE</button>
             <span style="color: var(--text-dim); font-size: 10px; margin-left: 10px;">v1.4.0</span>
         </div>
     </div>
@@ -136,15 +138,16 @@
             <div>
                 <h3>Add Assignment</h3>
                 <form id="mappingForm" onsubmit="app.saveMapping(event)">
+                    <div id="mappingConflictWarning" style="display:none; background:#2b1a0a; border:1px solid #ff8800; color:#ffaa55; font-weight:bold; padding:10px; margin-bottom:10px; border-radius:4px;"></div>
                     <div class="form-group">
                         <label for="formChipHex" style="color: var(--data);">Scanned Chip HEX Code</label>
-                        <input type="text" id="formChipHex" required placeholder="Wave a tag or paste code..." autocomplete="off">
+                        <input type="text" id="formChipHex" required placeholder="Wave a tag or paste code..." autocomplete="off" oninput="app.refreshMappingFormState()">
                     </div>
                     <div class="form-group">
                         <label for="formBibNum">Assign Bib Number</label>
-                        <input type="number" id="formBibNum" required placeholder="e.g., 104" autocomplete="off">
+                        <input type="number" id="formBibNum" required placeholder="e.g., 104" autocomplete="off" oninput="app.refreshMappingFormState()">
                     </div>
-                    <button type="submit" class="btn">Register Mapping</button>
+                    <button type="submit" id="mappingSubmitBtn" class="btn">Register Mapping</button>
                 </form>
                 <hr style="border:0; border-top:1px solid #333; margin: 30px 0;">
 
@@ -342,44 +345,41 @@
             e.preventDefault();
             const hex = document.getElementById('formChipHex').value;
             const bib = document.getElementById('formBibNum').value;
-            await engine.saveMapping(hex, bib);
-            document.getElementById('mappingForm').reset();
-            app.renderMappingTable();
+            const saved = await app.submitMapping(hex, bib);
+            if (saved) {
+                document.getElementById('mappingForm').reset();
+                app.renderMappingTable();
+                app.refreshMappingFormState();
+            }
         };
 
         app.deleteMapping = async (hex) => {
-            const tx = engine.db.transaction(['chip_map'], 'readwrite');
-            tx.objectStore('chip_map').delete(hex);
-            tx.oncomplete = () => app.renderMappingTable();
+            await engine.deleteMapping(hex);
+            app.renderMappingTable();
         };
 
         app.resetRace = async () => {
-            if (confirm("Reset current race timings?")) {
+            const readCount = (await engine.getAllFromStore('race_reads')).length;
+            if (confirm(app.buildWipeConfirmMessage(readCount, 0, false))) {
+                await app.performHeavyBackup();
                 await engine.clearRaceData();
                 location.reload();
             }
         };
 
         app.nukeDatabase = async () => {
-            if (confirm("NUKE EVERYTHING? This clears chips and race logs.")) {
+            const readCount = (await engine.getAllFromStore('race_reads')).length;
+            const mappingCount = (await engine.getAllFromStore('chip_map')).length;
+            if (confirm(app.buildWipeConfirmMessage(readCount, mappingCount, true))) {
+                await app.performHeavyBackup();
                 await engine.clearAllData();
                 location.reload();
             }
         };
 
         app.exportCsv = async () => {
-            const reads = await engine.getAllFromStore('race_reads');
-            const maps = await engine.getAllFromStore('chip_map');
-            if (!reads.length) return alert("No data to export");
-            const startMs = new Date(engine.raceStartTime).getTime();
-            const results = app.buildResultsFromReads(reads, maps, startMs);
-            const csv = app.buildCsvString(results);
-            const blob = new Blob([csv], { type: 'text/csv' });
-            const url = window.URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.setAttribute('href', url);
-            a.setAttribute('download', `race-export-${Date.now()}.csv`);
-            a.click();
+            const exported = await app.downloadStandingsCsv();
+            if (!exported) alert("No data to export");
         };
 
         app.exportChipMap = async () => {
@@ -399,17 +399,13 @@
             const file = event.target.files[0];
             if (!file) return;
             const text = await file.text();
-            const lines = text.split('\n').filter(l => l.trim() !== '');
-            let count = 0;
-            for (let line of lines) {
-                const [hex, bib] = line.split(',').map(s => s.trim());
-                if (hex && bib && hex.toUpperCase() !== "CHIPHEX") {
-                    await engine.saveMapping(hex, parseInt(bib, 10));
-                    count++;
-                }
+            const result = await app.submitChipMapImport(text);
+            if (result.imported) {
+                alert(`Imported ${result.count} mapping(s). Existing registry replaced.`);
+                app.renderMappingTable();
+                app.refreshMappingFormState();
             }
-            alert(`Imported ${count} mappings.`);
-            app.renderMappingTable();
+            event.target.value = '';
         };
 
         app.reconcileChips = async (event) => {

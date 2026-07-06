@@ -5,7 +5,7 @@
 class TimingEngine {
     constructor() {
         this.DB_NAME = "RaceTimingDB";
-        this.DB_VERSION = 1;
+        this.DB_VERSION = 2;
         this.db = null;
 
         this.isTrackingRace = false;
@@ -35,6 +35,9 @@ class TimingEngine {
                 }
                 if (!db.objectStoreNames.contains('race_reads')) {
                     db.createObjectStore('race_reads', { keyPath: 'id', autoIncrement: true });
+                }
+                if (!db.objectStoreNames.contains('app_settings')) {
+                    db.createObjectStore('app_settings', { keyPath: 'key' });
                 }
             };
 
@@ -99,13 +102,57 @@ class TimingEngine {
     async saveMapping(chipHex, bibNum) {
         if (!this.db) throw new Error("Database not initialized");
         const tx = this.db.transaction(['chip_map'], 'readwrite');
-        tx.objectStore('chip_map').put({ chip_hex: chipHex.toUpperCase().trim(), bib_num: bibNum });
+        tx.objectStore('chip_map').put({ chip_hex: chipHex.toUpperCase().trim(), bib_num: parseInt(bibNum, 10) });
         return new Promise(r => tx.oncomplete = r);
     }
 
     async getMappings() {
         if (!this.db) return [];
         return this.getAllFromStore('chip_map');
+    }
+
+    async deleteMapping(chipHex) {
+        if (!this.db) throw new Error("Database not initialized");
+        const tx = this.db.transaction(['chip_map'], 'readwrite');
+        tx.objectStore('chip_map').delete(chipHex.toUpperCase().trim());
+        return new Promise(r => tx.oncomplete = r);
+    }
+
+    async saveBackupHandle(handle) {
+        if (!this.db) throw new Error("Database not initialized");
+        const tx = this.db.transaction(['app_settings'], 'readwrite');
+        tx.objectStore('app_settings').put({ key: 'backupHandle', handle });
+        return new Promise(r => tx.oncomplete = r);
+    }
+
+    async getBackupHandle() {
+        if (!this.db) return null;
+        return new Promise((resolve, reject) => {
+            const tx = this.db.transaction(['app_settings'], 'readonly');
+            const req = tx.objectStore('app_settings').get('backupHandle');
+            req.onsuccess = () => resolve(req.result ? req.result.handle : null);
+            req.onerror = () => reject(req.error);
+        });
+    }
+
+    // Deliberately does zero computation — a raw, complete dump of both stores.
+    // This is what the periodic in-race backup timer calls; any aggregation/joins
+    // belong in the heavyweight (race-stopped) backup path instead.
+    async getRawSnapshot() {
+        return {
+            raceStartTime: this.raceStartTime,
+            race_reads: await this.getAllFromStore('race_reads'),
+            chip_map: await this.getAllFromStore('chip_map'),
+        };
+    }
+
+    async replaceChipMap(mappings) {
+        if (!this.db) throw new Error("Database not initialized");
+        const tx = this.db.transaction(['chip_map'], 'readwrite');
+        const store = tx.objectStore('chip_map');
+        store.clear();
+        mappings.forEach(m => store.put({ chip_hex: m.chip_hex.toUpperCase().trim(), bib_num: parseInt(m.bib_num, 10) }));
+        return new Promise(r => tx.oncomplete = r);
     }
 
     async clearRaceData() {
