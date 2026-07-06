@@ -197,22 +197,29 @@
                 </div>
 
                 <div style="margin-top: 20px; border-top: 1px solid #333; padding-top: 15px;">
-                    <h3>Pro Tag Writer <span style="font-size: 10px; color: #888; font-weight: normal;">(WIP — disabled, see KNOWN_ISSUES.md)</span></h3>
-                    <div class="form-group" style="background: #200; padding: 10px; border-radius: 5px; border: 1px solid var(--error);">
-                        <label style="font-size: 12px; color: white;">New Bib Number to Encode</label>
-                        <div style="display: flex; gap: 10px;">
-                            <input type="number" id="writeBibNum" placeholder="e.g. 101" style="border-color: var(--error);" disabled>
-                            <button id="writeBibBtn" class="btn btn-danger" onclick="app.writeBibToTag()" disabled>Burn to Tag</button>
+                    <h3>Bib Programming</h3>
+                    <div style="margin-bottom: 10px;">
+                        <button id="startBibProgBtn" class="btn" onclick="app.toggleBibProgrammingSession()">Start Programming Session</button>
+                    </div>
+                    <div id="bibProgrammingControls" style="display: none; background: #002200; padding: 15px; border-radius: 5px; border: 1px solid var(--accent);">
+                        <p style="margin: 0 0 10px; font-size: 12px; color: var(--accent);">Wave ONE chip at a time. Reader is now in Command mode.</p>
+                        <div class="form-group">
+                            <label for="bibProgBibNum" style="font-size: 12px;">Bib Number to Write</label>
+                            <div style="display: flex; gap: 10px;">
+                                <input type="number" id="bibProgBibNum" placeholder="e.g. 104" min="1" max="65535">
+                                <button class="btn" onclick="app.writeBibToChip()">Write to Chip</button>
+                            </div>
                         </div>
-                        <p style="font-size: 10px; color: #aaa; margin-top: 5px;">WARNING: Ensure only ONE tag is near the antenna when writing.</p>
+                        <div id="bibProgStatus" style="font-size: 12px; color: var(--data); min-height: 20px; margin-top: 5px;"></div>
+                        <p style="font-size: 10px; color: #aaa; margin-top: 10px;">Auto-increments bib after each successful write. Max: 65535.</p>
                     </div>
                 </div>
 
                 <div style="margin-top: 20px;">
-                    <h3>Pro Diagnostics <span style="font-size: 10px; color: #888; font-weight: normal;">(WIP — disabled, see KNOWN_ISSUES.md)</span></h3>
+                    <h3>Pro Diagnostics</h3>
                     <div style="display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 15px;">
-                        <button id="modeAnswerBtn" class="btn" onclick="app.setReaderMode('01')" style="font-size: 10px; color: var(--accent); border-color: var(--accent);" disabled>Switch to ANSWER MODE</button>
-                        <button id="modeActiveBtn" class="btn" onclick="app.setReaderMode('00')" style="font-size: 10px;" disabled>Switch to ACTIVE MODE</button>
+                        <button id="modeAnswerBtn" class="btn" onclick="app.switchToCommandMode()" style="font-size: 10px; color: var(--accent); border-color: var(--accent);">Switch to ANSWER MODE</button>
+                        <button id="modeActiveBtn" class="btn" onclick="app.switchToActiveMode()" style="font-size: 10px;">Switch to ACTIVE MODE</button>
                         <button id="getVersionBtn" class="btn" onclick="app.sendManualCommand(false, '7CFFFF823200')" style="font-size: 10px;" disabled>Get Version</button>
                         <button id="readTidBtn" class="btn" onclick="app.sendManualCommand(false, '7CFFFF123203020006')" style="font-size: 10px;" disabled>Read TID (Bank 2)</button>
                     </div>
@@ -475,6 +482,26 @@
             } else {
                 resultsEl.innerHTML = `Bib ${bib} bits not found in EPC.`;
             }
+        };
+
+        app.toggleBibProgrammingSession = async () => {
+            const btn = document.getElementById('startBibProgBtn');
+            const isActive = btn && btn.textContent.includes('End');
+            await app.setBibProgrammingMode(!isActive);
+        };
+
+        app.writeBibToChip = async () => {
+            await app.writeBibToScannedTag();
+        };
+
+        app.switchToCommandMode = async () => {
+            try { await driver.setWorkMode('command'); app.sysLog('SYSTEM: Reader in Command mode.'); }
+            catch (e) { app.sysLog(`MODE ERROR: ${e.message}`, true); }
+        };
+
+        app.switchToActiveMode = async () => {
+            try { await driver.setWorkMode('active'); app.sysLog('SYSTEM: Reader in Active mode.'); }
+            catch (e) { app.sysLog(`MODE ERROR: ${e.message}`, true); }
         };
 
         if ('serviceWorker' in navigator) {

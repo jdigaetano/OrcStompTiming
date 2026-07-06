@@ -112,6 +112,71 @@ describe('AppUI.buildResultsFromReads()', () => {
     });
 });
 
+// ─── decodeBibFromEpc ───────────────────────────────────────────────────────
+
+describe('AppUI.decodeBibFromEpc()', () => {
+    it('returns null for a factory EPC with no magic prefix', () => {
+        expect(ui.decodeBibFromEpc('E2806915000050042B3611EE')).toBeNull();
+    });
+
+    it('returns null for an EPC shorter than 4 bytes (no room for prefix+bib)', () => {
+        expect(ui.decodeBibFromEpc('4F53')).toBeNull();
+    });
+
+    it('returns null when the first 2 bytes are not the 0x4F53 magic', () => {
+        expect(ui.decodeBibFromEpc('DEADBEEF00000000')).toBeNull();
+    });
+
+    it('returns the bib number for bib 104 (0x0068)', () => {
+        expect(ui.decodeBibFromEpc('4F530068' + '00'.repeat(8))).toBe(104);
+    });
+
+    it('returns the bib number for bib 1 (0x0001)', () => {
+        expect(ui.decodeBibFromEpc('4F530001' + '00'.repeat(8))).toBe(1);
+    });
+
+    it('returns the bib number for bib 9999 (0x270F)', () => {
+        expect(ui.decodeBibFromEpc('4F53270F' + '00'.repeat(8))).toBe(9999);
+    });
+
+    it('returns the bib number for bib 65535 (0xFFFF)', () => {
+        expect(ui.decodeBibFromEpc('4F53FFFF' + '00'.repeat(8))).toBe(65535);
+    });
+});
+
+// ─── buildResultsFromReads — EPC decode path ────────────────────────────────
+
+describe('AppUI.buildResultsFromReads() — EPC-encoded bib', () => {
+    const START = new Date('2026-06-30T10:00:00.000Z').getTime();
+
+    function makeRead(tag, rssi, offsetMs) {
+        return { tag_hex: tag, rssi, timestamp: new Date(START + offsetMs).toISOString() };
+    }
+
+    it('uses the EPC-decoded bib when the magic prefix is present, ignoring chip_map', () => {
+        const epc = '4F530068' + '00'.repeat(8); // bib 104
+        const reads = [makeRead(epc, -60, 1000)];
+        const maps = [{ chip_hex: epc, bib_num: 999 }]; // chip_map has wrong bib — should be ignored
+        const results = ui.buildResultsFromReads(reads, maps, START);
+        expect(results[epc].bib).toBe(104);
+    });
+
+    it('falls back to chip_map when EPC has no magic prefix', () => {
+        const epc = 'AABBCCDDEEFF001122334455';
+        const reads = [makeRead(epc, -60, 1000)];
+        const maps = [{ chip_hex: epc, bib_num: 42 }];
+        const results = ui.buildResultsFromReads(reads, maps, START);
+        expect(results[epc].bib).toBe(42);
+    });
+
+    it('returns UNKNOWN when EPC has no magic prefix and no chip_map entry', () => {
+        const epc = 'AABBCCDDEEFF001122334455';
+        const reads = [makeRead(epc, -60, 1000)];
+        const results = ui.buildResultsFromReads(reads, [], START);
+        expect(results[epc].bib).toBe('UNKNOWN');
+    });
+});
+
 // ─── buildCsvString ─────────────────────────────────────────────────────────
 
 describe('AppUI.buildCsvString()', () => {

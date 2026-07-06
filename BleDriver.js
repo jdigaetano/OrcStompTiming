@@ -15,6 +15,7 @@ class BleDriver {
 
         this.isAutoReconnecting = false;
         this.intentionalDisconnect = false;
+        this._pendingCommand = null; // set by sendCommand(), cleared when response arrives or times out
     }
 
     async connect() {
@@ -198,6 +199,21 @@ class BleDriver {
             return;
         }
 
+        // Resolve a pending sendCommand() call when a matching CID1 response arrives.
+        // Active-mode push frames (CID1=0x20) are never command responses — let them
+        // fall through to onTagRead as normal even while a command is in flight.
+        if (this._pendingCommand && frame[3] === this._pendingCommand.expectedCid1 && frame[3] !== 0x20) {
+            const { resolve, reject, timer } = this._pendingCommand;
+            this._pendingCommand = null;
+            clearTimeout(timer);
+            if (frame[4] === 0x01) {
+                reject(new Error('Command failed: reader returned RTN=01 (Fail)'));
+            } else {
+                resolve(frame);
+            }
+            return;
+        }
+
         if (tagDecode && this.onTagRead) {
             this.onTagRead(tagDecode.epcHex, tagDecode.rssiDbm);
         }
@@ -230,6 +246,85 @@ class BleDriver {
 
     bytesToHex(bytes) {
         return bytes.map(b => b.toString(16).padStart(2, '0').toUpperCase()).join('');
+    }
+
+    // Writes a bib number into the chip's EPC bank with a 0x4F53 ("OS") magic prefix,
+    // then reads it back to verify the write landed. Returns {success, message}.
+    // Encoding: bytes 0-1 = 0x4F 0x53 magic; bytes 2-3 = bib as 16-bit big-endian.
+    // Write: MB=01 (EPC), SA=02 (byte offset 2, past the 2-byte PC word), DL=02 (2 words).
+    // Read-back: MB=01, SA=01 (word offset 1 = byte 2), DL=02.
+    async writeBibToEpc(bibNum) {
+        const bh = (bibNum >> 8) & 0xFF;
+        const bl = bibNum & 0xFF;
+        // 7C FF FF 12 31 07  01 02 02  4F 53 BH BL  [CHKSUM]
+        const writeHex = `7CFFFF1231070102024F53${bh.toString(16).padStart(2,'0').toUpperCase()}${bl.toString(16).padStart(2,'0').toUpperCase()}`;
+        try {
+            await this.sendCommand(writeHex, 0x12);
+        } catch (e) {
+            return { success: false, message: e.message };
+        }
+        let readFrame;
+        try {
+            // 7C FF FF 12 32 03  01 01 02  [CHKSUM] — read 2 words at word offset 1 (byte 2)
+            readFrame = await this.sendCommand('7CFFFF123203010102', 0x12);
+        } catch (e) {
+            return { success: false, message: `Write may have succeeded but read-back failed: ${e.message}` };
+        }
+        // Read-back INFO: AN(frame[6]) + 4 data bytes (frame[7..10])
+        const match = readFrame[7] === 0x4F && readFrame[8] === 0x53 &&
+                      readFrame[9] === bh  && readFrame[10] === bl;
+        return match
+            ? { success: true,  message: `Bib ${bibNum} written and verified.` }
+            : { success: false, message: `Write sent but verify failed — chip returned unexpected bytes.` };
+    }
+
+    // WM byte position in the 28-byte Basic Parameters INFO block (PROTOCOL_SPEC.md §4.8):
+    // PW(0) FHE(1) FFV(2) FHV1-FHV6(3-8) WM(9) ...
+    static get WM_INDEX() { return 9; }
+
+    async getReaderParameters() {
+        const frame = await this.sendCommand('7CFFFF813200', 0x81);
+        return frame.slice(6, 34); // INFO block: 28 bytes starting after the 6-byte header
+    }
+
+    async setReaderParameters(paramBytes) {
+        // 7C FF FF 81 31 1C [28 bytes]. sendRawHex auto-signs when length matches header.
+        const header = [0x7C, 0xFF, 0xFF, 0x81, 0x31, 0x1C];
+        const allBytes = [...header, ...paramBytes];
+        const hex = allBytes.map(b => b.toString(16).padStart(2, '0').toUpperCase()).join('');
+        await this.sendCommand(hex, 0x81);
+    }
+
+    // Get Parameters → flip WM byte only → Set Parameters back.
+    // 'command' = WM=0x01 (quiet, on-demand reads only)
+    // 'active'  = WM=0x02 (auto-broadcasts every read, default factory mode)
+    async setWorkMode(mode) {
+        const params = new Uint8Array(await this.getReaderParameters());
+        params[BleDriver.WM_INDEX] = mode === 'command' ? 0x01 : 0x02;
+        await this.setReaderParameters(params);
+    }
+
+    // Sends a command and returns a Promise that resolves with the raw response frame
+    // once a frame with matching CID1 arrives (RTN=00), or rejects on RTN=01 or timeout.
+    // Active-mode push frames (CID1=0x20) arriving while waiting are passed through to
+    // onTagRead normally — they never satisfy this promise.
+    sendCommand(hexString, expectedCid1, timeoutMs = 1000) {
+        if (!this.writeCharacteristic) return Promise.reject(new Error('No write pipe available'));
+
+        return new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+                this._pendingCommand = null;
+                reject(new Error(`sendCommand timeout waiting for CID1=0x${expectedCid1.toString(16).toUpperCase()}`));
+            }, timeoutMs);
+
+            this._pendingCommand = { expectedCid1, resolve, reject, timer };
+
+            this.sendRawHex(hexString).catch(err => {
+                clearTimeout(timer);
+                this._pendingCommand = null;
+                reject(err);
+            });
+        });
     }
 
     async sendRawHex(hex) {

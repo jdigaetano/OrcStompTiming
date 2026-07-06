@@ -464,35 +464,34 @@ class AppUI {
         if (history.children.length > 20) history.removeChild(history.lastChild);
     }
 
-    async setReaderMode(mode) {
-        // mode 01 = Answer Mode (Quiet), 00 = Active Mode (Beeping)
-        const cmd = `7CFFFF010201${mode}`;
+    async setBibProgrammingMode(active) {
         try {
-            await this.driver.sendRawHex(cmd);
-            this.sysLog(`SYSTEM: Switched to ${mode === '01' ? 'ANSWER' : 'ACTIVE'} mode.`);
+            await this.driver.setWorkMode(active ? 'command' : 'active');
+            this.sysLog(`SYSTEM: Reader switched to ${active ? 'Command (programming)' : 'Active (race)'} mode.`);
         } catch (e) {
             this.sysLog(`MODE ERROR: ${e.message}`, true);
         }
+        const section = document.getElementById('bibProgrammingControls');
+        if (section) section.style.display = active ? '' : 'none';
+        const startBtn = document.getElementById('startBibProgBtn');
+        if (startBtn) startBtn.textContent = active ? 'End Programming Session' : 'Start Programming Session';
     }
 
-    async writeBibToTag() {
-        const bib = document.getElementById('writeBibNum').value;
-        if (!bib) return alert("Enter a Bib number first");
-
-        const bibHex = parseInt(bib, 10).toString(16).padStart(4, '0').toUpperCase();
-
-        // Command 12 31 (Write Memory)
-        // Bank 01 (EPC), Start 02 (Skip PC), Len 01 (1 word / 2 bytes)
-        // Full Info: [Bank][Start][Len][Data] = 01 02 01 + [bibHex]
-        const info = `010201${bibHex}`;
-        const lenByte = (info.length / 2).toString(16).padStart(2, '0');
-        const cmd = `7CFFFF1231${lenByte}${info}`;
-
-        try {
-            this.sysLog(`WRITER: Attempting to burn Bib ${bib} (${bibHex}) to tag...`);
-            await this.driver.sendRawHex(cmd);
-        } catch (e) {
-            this.sysLog(`WRITE ERROR: ${e.message}`, true);
+    async writeBibToScannedTag() {
+        const bibInput = document.getElementById('bibProgBibNum');
+        const statusEl = document.getElementById('bibProgStatus');
+        const bibNum = parseInt(bibInput?.value, 10);
+        if (!bibInput || isNaN(bibNum) || bibNum < 1) {
+            if (statusEl) statusEl.textContent = 'Enter a valid bib number first.';
+            return;
+        }
+        if (statusEl) statusEl.textContent = 'Writing…';
+        const result = await this.driver.writeBibToEpc(bibNum);
+        if (statusEl) statusEl.textContent = result.success ? `✓ ${result.message}` : `✗ ${result.message}`;
+        if (result.success) {
+            this.sysLog(`BIB PROG: Bib ${bibNum} written and verified.`);
+            // Auto-increment for next chip
+            if (bibInput) bibInput.value = bibNum + 1;
         }
     }
 
@@ -511,6 +510,14 @@ class AppUI {
         const ss = d.getSeconds().toString().padStart(2, '0');
         const ms = d.getMilliseconds().toString().padStart(3, '0');
         return `${hh}:${mm}:${ss}.${ms}`;
+    }
+
+    // Returns the bib number encoded in an EPC hex string, or null if not present.
+    // Encoding: first 4 hex chars must be "4F53" (magic), next 4 hex chars are bib as 16-bit big-endian.
+    decodeBibFromEpc(epcHex) {
+        if (!epcHex || epcHex.length < 8) return null;
+        if (epcHex.toUpperCase().slice(0, 4) !== '4F53') return null;
+        return parseInt(epcHex.slice(4, 8), 16);
     }
 
     buildResultsFromReads(reads, maps, raceStartMs) {
@@ -534,8 +541,9 @@ class AppUI {
                 if (r.rssi > bestRead.rssi) bestRead = r;
             }
             const elapsedMs = new Date(bestRead.timestamp).getTime() - raceStartMs;
+            const epcBib = this.decodeBibFromEpc(hex);
             results[hex] = {
-                bib: chipToBib[hex] ?? 'UNKNOWN',
+                bib: epcBib !== null ? epcBib : (chipToBib[hex] ?? 'UNKNOWN'),
                 elapsedMs,
                 elapsed: this.formatTime(elapsedMs),
                 wallClock: this.formatWallClock(bestRead.timestamp),
