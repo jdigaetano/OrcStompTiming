@@ -93,4 +93,12 @@ describe('BleDriver.sendCommand()', () => {
         driver.writeCharacteristic = null;
         await expect(driver.sendCommand('7CFFFF813200', 0x81)).rejects.toThrow(/write pipe/i);
     });
+
+    it('resolves with a CID1=0x20 frame when explicitly waiting for CID1=0x20 (on-demand poll)', async () => {
+        const pollResponse = makeTagPushFrame(); // CID1=0x20, RTN=0x05
+        const promise = driver.sendCommand('7CFFFF200000', 0x20);
+        fireNotification(driver, pollResponse);
+        const frame = await promise;
+        expect(frame[3]).toBe(0x20);
+    });
 });

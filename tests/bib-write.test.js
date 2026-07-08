@@ -8,17 +8,18 @@ const loadScript = (fileName) => {
     return script(global);
 };
 
-// Build a read-back response frame: CC FF FF 12 00 05 [AN] [4 data bytes] [CHKSUM]
-function makeReadbackResponse(dataBytes) {
-    const frame = [0xCC, 0xFF, 0xFF, 0x12, 0x00, 0x05, 0x01, ...dataBytes];
+// CID1=0x20 poll response — RTN=0x05 means tag found in BLE mode
+function makePollResponse() {
+    const frame = [0xCC, 0xFF, 0xFF, 0x20, 0x05, 0x00];
     let sum = 0;
     for (const b of frame) sum += b;
     frame.push(((~sum) + 1) & 0xFF);
     return new Uint8Array(frame);
 }
 
-function makeWriteResponse(rtn = 0x00) {
-    const frame = [0xCC, 0xFF, 0xFF, 0x12, rtn, 0x00];
+// CID1=0x22 authenticated write response — RTN=0x00 success, returns old EPC (ignored)
+function makeWriteResponse() {
+    const frame = [0xCC, 0xFF, 0xFF, 0x22, 0x00, 0x00];
     let sum = 0;
     for (const b of frame) sum += b;
     frame.push(((~sum) + 1) & 0xFF);
@@ -37,33 +38,74 @@ describe('BleDriver.writeBibToEpc()', () => {
         };
     });
 
-    it('sends a write command targeting EPC bank (MB=01) at byte offset 2 (SA=02)', async () => {
-        const sendCmd = vi.spyOn(driver, 'sendCommand');
-        // First call (write) returns success; second call (read-back) returns matching data
-        sendCmd
-            .mockResolvedValueOnce(makeWriteResponse(0x00))
-            .mockResolvedValueOnce(makeReadbackResponse([0x4F, 0x53, 0x00, 0x68])); // bib 104
+    // Vendor USB trace (2026-07-07) revealed the real write command is CID1=0x22
+    // (authenticated write, MM extension) — NOT CID1=0x12 (documented spec write).
+    // CID1=0x12 gets no response from this reader. CID1=0x22 prepends a 4-byte
+    // access password (all zeros for unprotected tags) and uses word-offset SA.
+    //
+    // The demo app polls with CID1=0x20 first (to singulate the tag), then immediately
+    // sends CID1=0x22 to write to the held-singulated tag. Sending the write without a
+    // prior poll causes a false RTN=0x00 (reader accepts the command frame but no tag
+    // was singulated, so no write occurs). Confirmed by hardware test 2026-07-08.
+    //
+    // DL=06 writes all 6 words of the 96-bit EPC (matching the demo app), not just 2.
+    // Response returns old EPC; RTN=0x00 is the success indicator.
 
+    it('uses CID1=0x22 (authenticated write, not documented CID1=0x12)', async () => {
+        const sendCmd = vi.spyOn(driver, 'sendCommand')
+            .mockResolvedValueOnce(makePollResponse())
+            .mockResolvedValueOnce(makeWriteResponse());
         await driver.writeBibToEpc(104);
-
-        const [writeHex] = sendCmd.mock.calls[0];
-        // Header: 7C FF FF 12 31 07 (CID1=12H CID2=31H LENGTH=07)
-        expect(writeHex.toUpperCase()).toMatch(/^7CFFFF123107/);
-        // Payload starts at char 12: MB=01 SA=02 DL=02
-        expect(writeHex.toUpperCase().slice(12, 18)).toBe('010202');
+        const writeCid1 = sendCmd.mock.calls[1][1];
+        const writeHex = sendCmd.mock.calls[1][0];
+        expect(writeHex.toUpperCase()).toMatch(/^7CFFFF22/);
+        expect(writeCid1).toBe(0x22);
     });
 
-    it('encodes the magic prefix 0x4F53 followed by the bib as 2-byte big-endian', async () => {
-        const sendCmd = vi.spyOn(driver, 'sendCommand');
-        sendCmd
-            .mockResolvedValueOnce(makeWriteResponse(0x00))
-            .mockResolvedValueOnce(makeReadbackResponse([0x4F, 0x53, 0x00, 0x68]));
-
+    it('sends CID1=0x20 poll first (singulates the tag) before sending CID1=0x22 write', async () => {
+        const sendCmd = vi.spyOn(driver, 'sendCommand')
+            .mockResolvedValueOnce(makePollResponse())
+            .mockResolvedValueOnce(makeWriteResponse());
         await driver.writeBibToEpc(104);
+        expect(sendCmd.mock.calls[0][1]).toBe(0x20); // first call = poll
+        expect(sendCmd.mock.calls[1][1]).toBe(0x22); // second call = write
+    });
 
-        const writeHex = sendCmd.mock.calls[0][0].toUpperCase();
-        // After header (12 chars) + MB/SA/DL (6 chars): data bytes 4F 53 00 68
-        expect(writeHex.slice(18, 26)).toBe('4F530068');
+    it('sends 4-byte access password (all zeros) before MB/SA/DL/data', async () => {
+        const sendCmd = vi.spyOn(driver, 'sendCommand')
+            .mockResolvedValueOnce(makePollResponse())
+            .mockResolvedValueOnce(makeWriteResponse());
+        await driver.writeBibToEpc(104);
+        const hex = sendCmd.mock.calls[1][0].toUpperCase();
+        // bytes 6-13 (after 7C FF FF 22 00 13) = 4-byte password
+        expect(hex.slice(12, 20)).toBe('00000000'); // password = 0x00000000
+    });
+
+    it('sends MB=01 (EPC bank), SA=02 (word offset 2 = first EPC word), DL=06 (6 words = full 96-bit EPC)', async () => {
+        const sendCmd = vi.spyOn(driver, 'sendCommand')
+            .mockResolvedValueOnce(makePollResponse())
+            .mockResolvedValueOnce(makeWriteResponse());
+        await driver.writeBibToEpc(104);
+        const hex = sendCmd.mock.calls[1][0].toUpperCase();
+        expect(hex.slice(20, 26)).toBe('010206'); // MB SA DL
+    });
+
+    it('pads the remaining 8 EPC bytes with 00 (not FF — zeros read as intentionally empty, FFs look like unwritten factory data)', async () => {
+        const sendCmd = vi.spyOn(driver, 'sendCommand')
+            .mockResolvedValueOnce(makePollResponse())
+            .mockResolvedValueOnce(makeWriteResponse());
+        await driver.writeBibToEpc(104);
+        const hex = sendCmd.mock.calls[1][0].toUpperCase();
+        expect(hex.slice(34, 50)).toBe('0000000000000000'); // 8 padding bytes after 4F53BHBL
+    });
+
+    it('encodes the magic prefix 0x4F53 followed by the bib as 2-byte big-endian in the first 4 data bytes', async () => {
+        const sendCmd = vi.spyOn(driver, 'sendCommand')
+            .mockResolvedValueOnce(makePollResponse())
+            .mockResolvedValueOnce(makeWriteResponse());
+        await driver.writeBibToEpc(104);
+        const hex = sendCmd.mock.calls[1][0].toUpperCase();
+        expect(hex.slice(26, 34)).toBe('4F530068'); // 104 = 0x0068
     });
 
     it('encodes different bib numbers correctly', async () => {
@@ -75,56 +117,45 @@ describe('BleDriver.writeBibToEpc()', () => {
             { bib: 65535, hex: '4F53FFFF' },
         ];
         for (const { bib, hex } of cases) {
-            const sendCmd = vi.spyOn(driver, 'sendCommand');
-            const bibBytes = [bib >> 8, bib & 0xFF];
-            sendCmd
-                .mockResolvedValueOnce(makeWriteResponse(0x00))
-                .mockResolvedValueOnce(makeReadbackResponse([0x4F, 0x53, ...bibBytes]));
-
+            const sendCmd = vi.spyOn(driver, 'sendCommand')
+                .mockResolvedValueOnce(makePollResponse())
+                .mockResolvedValueOnce(makeWriteResponse());
             await driver.writeBibToEpc(bib);
-
-            const writeHex = sendCmd.mock.calls[0][0].toUpperCase();
-            expect(writeHex.slice(18, 26)).toBe(hex);
+            const writeHex = sendCmd.mock.calls[1][0].toUpperCase();
+            expect(writeHex.slice(26, 34)).toBe(hex);
             sendCmd.mockRestore();
         }
     });
 
-    it('sends a read-back command (MB=01, SA=01 word offset, DL=02) after a successful write', async () => {
-        const sendCmd = vi.spyOn(driver, 'sendCommand');
-        sendCmd
-            .mockResolvedValueOnce(makeWriteResponse(0x00))
-            .mockResolvedValueOnce(makeReadbackResponse([0x4F, 0x53, 0x00, 0x68]));
-
+    it('issues exactly 2 sendCommand calls — CID1=0x20 poll then CID1=0x22 write (no separate read-back)', async () => {
+        const sendCmd = vi.spyOn(driver, 'sendCommand')
+            .mockResolvedValueOnce(makePollResponse())
+            .mockResolvedValueOnce(makeWriteResponse());
         await driver.writeBibToEpc(104);
-
         expect(sendCmd).toHaveBeenCalledTimes(2);
-        const [readHex] = sendCmd.mock.calls[1];
-        // CID1=12H, CID2=32H, LENGTH=03, MB=01, SA=01, DL=02
-        expect(readHex.toUpperCase()).toMatch(/^7CFFFF123203010102/);
     });
 
-    it('returns {success: true} when read-back bytes match what was written', async () => {
+    it('returns {success: true} when poll finds chip and write response RTN=0x00', async () => {
         vi.spyOn(driver, 'sendCommand')
-            .mockResolvedValueOnce(makeWriteResponse(0x00))
-            .mockResolvedValueOnce(makeReadbackResponse([0x4F, 0x53, 0x00, 0x68]));
-
+            .mockResolvedValueOnce(makePollResponse())
+            .mockResolvedValueOnce(makeWriteResponse());
         const result = await driver.writeBibToEpc(104);
         expect(result.success).toBe(true);
     });
 
-    it('returns {success: false} when read-back bytes do not match', async () => {
+    it('returns {success: false} when no chip is detected within poll timeout', async () => {
         vi.spyOn(driver, 'sendCommand')
-            .mockResolvedValueOnce(makeWriteResponse(0x00))
-            .mockResolvedValueOnce(makeReadbackResponse([0x00, 0x00, 0x00, 0x00])); // wrong
-
-        const result = await driver.writeBibToEpc(104);
+            .mockRejectedValue(new Error('sendCommand timeout waiting for CID1=0x20'));
+        // totalWaitMs=300, pollIntervalMs=300 → 1 attempt → immediate failure
+        const result = await driver.writeBibToEpc(104, 300, 300);
         expect(result.success).toBe(false);
-        expect(result.message).toMatch(/verify/i);
+        expect(result.message).toMatch(/No chip detected/i);
     });
 
-    it('returns {success: false} when the write command itself fails (RTN=01)', async () => {
-        vi.spyOn(driver, 'sendCommand').mockRejectedValueOnce(new Error('Command failed: reader returned RTN=01'));
-
+    it('returns {success: false} when the write command fails after a chip is detected', async () => {
+        vi.spyOn(driver, 'sendCommand')
+            .mockResolvedValueOnce(makePollResponse())
+            .mockRejectedValue(new Error('sendCommand timeout waiting for CID1=0x22'));
         const result = await driver.writeBibToEpc(104);
         expect(result.success).toBe(false);
         expect(result.message).toBeTruthy();

@@ -74,7 +74,7 @@
             <button id="chooseBackupBtn" class="btn" style="padding: 4px 8px; font-size: 10px; border-color: #555; color: #555;" onclick="app.chooseBackupLocation()">CHOOSE BACKUP LOCATION</button>
             <span id="backupLocationLabel" style="color: var(--text-dim); font-size: 10px; margin-left: 8px;">No backup location set</span>
             <button id="mockToggleBtn" class="btn" style="padding: 4px 8px; font-size: 10px; border-color: #555; color: #555; margin-left: 10px;" onclick="app.toggleMockMode()">ENABLE MOCK MODE</button>
-            <span style="color: var(--text-dim); font-size: 10px; margin-left: 10px;">v1.4.0</span>
+            <span style="color: var(--text-dim); font-size: 10px; margin-left: 10px;">v1.4.3</span>
         </div>
     </div>
 
@@ -202,7 +202,7 @@
                         <button id="startBibProgBtn" class="btn" onclick="app.toggleBibProgrammingSession()">Start Programming Session</button>
                     </div>
                     <div id="bibProgrammingControls" style="display: none; background: #002200; padding: 15px; border-radius: 5px; border: 1px solid var(--accent);">
-                        <p style="margin: 0 0 10px; font-size: 12px; color: var(--accent);">Wave ONE chip at a time. Reader is now in Command mode.</p>
+                        <p style="margin: 0 0 10px; font-size: 12px; color: var(--accent);">Reader is quiet. Enter bib, hold ONE chip near reader, then click Write — it will detect and program the chip (up to 5s).</p>
                         <div class="form-group">
                             <label for="bibProgBibNum" style="font-size: 12px;">Bib Number to Write</label>
                             <div style="display: flex; gap: 10px;">

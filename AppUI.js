@@ -426,6 +426,10 @@ class AppUI {
             const anHex = tagDecode.an.toString(16).padStart(2, '0').toUpperCase();
             const pcHex = tagDecode.pc.toString(16).padStart(4, '0').toUpperCase();
             const rssiRawHex = tagDecode.rssiRaw.toString(16).padStart(2, '0').toUpperCase();
+            const decodedBib = this.decodeBibFromEpc(tagDecode.epcHex);
+            const bibRow = decodedBib !== null
+                ? `<b style="color: var(--accent); font-weight: bold;">BIB:</b> <span style="color: var(--accent); font-weight: bold;">${decodedBib} <small>(OrcStomp encoded)</small></span>`
+                : `<b style="color: #555;">BIB:</b> <span style="color: #555;">— <small>(not programmed)</small></span>`;
             tagPanel = `
                 <div style="margin-top: 15px; border-top: 1px solid #444; padding-top: 10px;">
                     <div style="color: var(--timer-color); font-weight: bold; margin-bottom: 5px;">TAG READ DECODE</div>
@@ -433,6 +437,7 @@ class AppUI {
                         <b style="color: #888;">AN:</b> <span>${anHex} <small>(antenna)</small></span>
                         <b style="color: #888;">PC:</b> <span>${pcHex} <small>(EPC len ${tagDecode.epcLenWords} words / ${tagDecode.epcLenBytes} bytes)</small></span>
                         <b style="color: #888;">EPC:</b> <span id="inspectorEpcHex" style="word-break: break-all; background: #1a1a1a; padding: 2px 4px;">${tagDecode.epcHex}</span>
+                        ${bibRow}
                         <b style="color: #888;">RSSI Raw:</b> <span>${rssiRawHex}</span>
                         <b style="color: #888;">RSSI:</b> <span>${tagDecode.rssiDbm} dBm</span>
                     </div>
@@ -467,14 +472,15 @@ class AppUI {
     async setBibProgrammingMode(active) {
         try {
             await this.driver.setWorkMode(active ? 'command' : 'active');
-            this.sysLog(`SYSTEM: Reader switched to ${active ? 'Command (programming)' : 'Active (race)'} mode.`);
         } catch (e) {
             this.sysLog(`MODE ERROR: ${e.message}`, true);
+            return;
         }
         const section = document.getElementById('bibProgrammingControls');
         if (section) section.style.display = active ? '' : 'none';
         const startBtn = document.getElementById('startBibProgBtn');
         if (startBtn) startBtn.textContent = active ? 'End Programming Session' : 'Start Programming Session';
+        this.sysLog(`SYSTEM: Bib programming ${active ? 'started — reader is quiet' : 'ended — reader back to active scanning'}.`);
     }
 
     async writeBibToScannedTag() {
@@ -485,12 +491,12 @@ class AppUI {
             if (statusEl) statusEl.textContent = 'Enter a valid bib number first.';
             return;
         }
-        if (statusEl) statusEl.textContent = 'Writing…';
+        if (statusEl) statusEl.textContent = 'Place chip near reader… (up to 5s)';
+        // Reader stays in command mode. writeBibToEpc polls for a chip, then writes.
         const result = await this.driver.writeBibToEpc(bibNum);
         if (statusEl) statusEl.textContent = result.success ? `✓ ${result.message}` : `✗ ${result.message}`;
         if (result.success) {
             this.sysLog(`BIB PROG: Bib ${bibNum} written and verified.`);
-            // Auto-increment for next chip
             if (bibInput) bibInput.value = bibNum + 1;
         }
     }
