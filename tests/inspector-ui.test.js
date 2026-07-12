@@ -18,14 +18,17 @@ beforeEach(() => {
 });
 
 describe('Tag Inspector: WIP/dangerous controls are disabled', () => {
-    it('disables the Pro Tag Writer (Burn to Tag)', () => {
-        expect(document.getElementById('writeBibNum').disabled).toBe(true);
-        expect(document.getElementById('writeBibBtn').disabled).toBe(true);
+    it('enables the Bib Programming session button (mode switch is now implemented)', () => {
+        expect(document.getElementById('startBibProgBtn')).not.toBeNull();
+        expect(document.getElementById('startBibProgBtn').disabled).toBe(false);
     });
 
-    it('disables the Pro Diagnostics buttons (mode switch, version, TID read)', () => {
-        expect(document.getElementById('modeAnswerBtn').disabled).toBe(true);
-        expect(document.getElementById('modeActiveBtn').disabled).toBe(true);
+    it('enables the Pro Diagnostics mode-switch buttons (mode switch is now implemented)', () => {
+        expect(document.getElementById('modeAnswerBtn').disabled).toBe(false);
+        expect(document.getElementById('modeActiveBtn').disabled).toBe(false);
+    });
+
+    it('disables the Pro Diagnostics buttons that are still unimplemented (version, TID read)', () => {
         expect(document.getElementById('getVersionBtn').disabled).toBe(true);
         expect(document.getElementById('readTidBtn').disabled).toBe(true);
     });

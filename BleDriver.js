@@ -15,6 +15,7 @@ class BleDriver {
 
         this.isAutoReconnecting = false;
         this.intentionalDisconnect = false;
+        this._pendingCommand = null; // set by sendCommand(), cleared when response arrives or times out
     }
 
     async connect() {
@@ -198,6 +199,22 @@ class BleDriver {
             return;
         }
 
+        // Resolve a pending sendCommand() call when a matching CID1 response arrives.
+        // CID1=0x20 is excluded unless we're explicitly waiting for it (on-demand poll).
+        // Active-mode push frames (CID1=0x20) have a different expectedCid1 in _pendingCommand,
+        // so the frame[3] === expectedCid1 check already gates them out — no extra exclusion needed.
+        if (this._pendingCommand && frame[3] === this._pendingCommand.expectedCid1) {
+            const { resolve, reject, timer } = this._pendingCommand;
+            this._pendingCommand = null;
+            clearTimeout(timer);
+            if (frame[4] === 0x01) {
+                reject(new Error('Command failed: reader returned RTN=01 (Fail)'));
+            } else {
+                resolve(frame);
+            }
+            return;
+        }
+
         if (tagDecode && this.onTagRead) {
             this.onTagRead(tagDecode.epcHex, tagDecode.rssiDbm);
         }
@@ -230,6 +247,111 @@ class BleDriver {
 
     bytesToHex(bytes) {
         return bytes.map(b => b.toString(16).padStart(2, '0').toUpperCase()).join('');
+    }
+
+    // Writes a bib number into the chip's EPC bank with a 0x4F53 ("OS") magic prefix.
+    // Returns {success, message}.
+    //
+    // Protocol: CID1=0x22 authenticated write (MM-reader extension, vendor USB trace 2026-07-07).
+    // CID1=0x12 (documented spec) gets no response from this reader.
+    //
+    // Singulation: must poll with CID1=0x20 FIRST to singulate the tag, then write immediately.
+    // Sending CID1=0x22 without a prior poll causes false RTN=0x00 (reader accepts the frame
+    // but no tag is singulated, so the write never reaches the chip). Confirmed 2026-07-08.
+    //
+    // Frame: 7C FF FF 22 00 13  00000000  01 02 06  4F53BHBL FFFFFFFFFFFFFFFF  [CHKSUM]
+    //   password=00000000, MB=01 (EPC bank), SA=02 (word offset 2 = first EPC word),
+    //   DL=06 (6 words = full 96-bit EPC), first 4 bytes=bib encoding, rest=FFs
+    // Response: RTN=0x00 success + old EPC (ignored).
+    async writeBibToEpc(bibNum, totalWaitMs = 5000, pollIntervalMs = 300) {
+        const bh = (bibNum >> 8) & 0xFF;
+        const bl = bibNum & 0xFF;
+        const bhHex = bh.toString(16).padStart(2, '0').toUpperCase();
+        const blHex = bl.toString(16).padStart(2, '0').toUpperCase();
+        // 7C FF FF 22 00 13  00000000  01 02 06  4F53BHBL FFFFFFFFFFFFFFFF  [CHKSUM]
+        const writeHex = `7CFFFF220013000000000102064F53${bhHex}${blHex}0000000000000000`;
+
+        // Step 1: Poll for a singulated tag (reader must be in command mode).
+        // Retry every pollIntervalMs up to totalWaitMs total.
+        const maxAttempts = Math.max(1, Math.ceil(totalWaitMs / pollIntervalMs));
+        let found = false;
+        for (let i = 0; i < maxAttempts; i++) {
+            try {
+                await this.sendCommand('7CFFFF200000', 0x20, pollIntervalMs);
+                found = true;
+                break;
+            } catch (e) {
+                // No tag this cycle — keep trying until deadline.
+            }
+        }
+        if (!found) {
+            return { success: false, message: 'No chip detected within timeout.' };
+        }
+
+        // Step 2: Write immediately while the tag is still singulated.
+        try {
+            await this.sendCommand(writeHex, 0x22);
+        } catch (e) {
+            return { success: false, message: e.message };
+        }
+        return { success: true, message: `Bib ${bibNum} written.` };
+    }
+
+    // WM byte position in the 28-byte Basic Parameters INFO block (PROTOCOL_SPEC.md §4.8):
+    // PW(0) FHE(1) FFV(2) FHV1-FHV6(3-8) WM(9) ...
+    static get WM_INDEX() { return 9; }
+
+    async getReaderParameters() {
+        const frame = await this.sendCommand('7CFFFF813200', 0x81);
+        // Use the actual LEN byte (frame[5]) — this hardware returns 27 bytes (0x1B),
+        // not 28 (0x1C) as the spec says. Hardcoding 34 accidentally included the checksum.
+        return frame.slice(6, 6 + frame[5]);
+    }
+
+    async setReaderParameters(paramBytes) {
+        // The spec defines Set Parameters with LEN=0x1C (28 bytes). This hardware's
+        // Get returns only 27 bytes, but Set MUST send 28 — sending 27 returns RTN=00
+        // but is silently ignored. The missing 28th byte is MR (Max tags per read
+        // cycle, §4.8); padding with 0x00 is out of the valid range (10–64) and
+        // causes the reader to silently discard the flash write while returning RTN=00.
+        const padded = new Uint8Array(28);
+        padded[27] = 0x0A; // MR = 10 (minimum valid; overwritten if caller supplied 28 bytes)
+        padded.set(paramBytes.slice(0, 28));
+        const header = [0x7C, 0xFF, 0xFF, 0x81, 0x31, 0x1C];
+        const allBytes = [...header, ...padded];
+        const hex = allBytes.map(b => b.toString(16).padStart(2, '0').toUpperCase()).join('');
+        await this.sendCommand(hex, 0x81);
+    }
+
+    // CtrlAutoRead-only approach — never writes WM to flash.
+    // WM=0x02 stays in flash (factory default) so CtrlAutoRead(1) always reliably
+    // restarts the scan loop. Writing WM=0x01 to flash breaks CtrlAutoRead(1) until
+    // the next reboot. See PROTOCOL_SPEC.md §6.
+    async setWorkMode(mode) {
+        await this.sendRawHex(mode === 'command' ? '7CFFFF34000100' : '7CFFFF34000101');
+    }
+
+    // Sends a command and returns a Promise that resolves with the raw response frame
+    // once a frame with matching CID1 arrives (RTN=00), or rejects on RTN=01 or timeout.
+    // Active-mode push frames (CID1=0x20) arriving while waiting are passed through to
+    // onTagRead normally — they never satisfy this promise.
+    sendCommand(hexString, expectedCid1, timeoutMs = 1000) {
+        if (!this.writeCharacteristic) return Promise.reject(new Error('No write pipe available'));
+
+        return new Promise((resolve, reject) => {
+            const timer = setTimeout(() => {
+                this._pendingCommand = null;
+                reject(new Error(`sendCommand timeout waiting for CID1=0x${expectedCid1.toString(16).toUpperCase()}`));
+            }, timeoutMs);
+
+            this._pendingCommand = { expectedCid1, resolve, reject, timer };
+
+            this.sendRawHex(hexString).catch(err => {
+                clearTimeout(timer);
+                this._pendingCommand = null;
+                reject(err);
+            });
+        });
     }
 
     async sendRawHex(hex) {

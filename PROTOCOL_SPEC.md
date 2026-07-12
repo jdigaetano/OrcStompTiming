@@ -186,7 +186,79 @@ Equivalently: a complete, valid frame (including its own CHKSUM byte) always sum
 - **Read vs. Write `SA` pointer units differ.** Section 4.6 (EPC Write Memory Bank) explicitly says `SA` is a **byte** pointer; Section 4.7 (EPC Read Memory Bank) explicitly says `SA` is a **word** pointer. Both sections use the identical example value `SA=0x06` against "User bank." If taken literally, a write to `SA=0x06` (byte offset 6 = word 3) and a read from `SA=0x06` (word offset 6 = byte 12) target *different* memory — meaning a naive "write here, read it back from the same SA" check could appear to fail even with a correct implementation. **This directly bears on the open question about `writeBibToTag()`'s encoding assumption** (tracked in memory) — worth testing read-after-write on a real chip with known SA values before trusting either interpretation.
 - **Section 4.5.2's response header is mislabeled.** Prose says "CID1: 10H" but the worked hex example for the exact same response uses `11H` (matching the `11H` command that was sent). Trust the hex example; the prose line is a typo in the source manual.
 
-## 6. Set Aside — NOT in This Manual
+## 6. Undocumented MM-Reader Extension Commands (Reverse-Engineered from SDK DLL + USB Trace, 2026-07-07)
+
+This reader is the "MM" hardware variant. The vendor's `ADDeviceReader.dll` (`ADSDK.Device.Reader.Adpmm.AdpmmCommand` class) was reverse-engineered via `ildasm.exe` disassembly. Additional commands were discovered from a live USB traffic capture of the vendor demo app performing a successful chip write (captured 2026-07-07 via USBPcap + Wireshark).
+
+Most use **CID2=0x00** (unassigned in Table 3-2). The `ADRcp::BuildCmdPacketByte(uint8 nType, uint8 nCmd, uint8[])` convention confirmed from IL: `nType` → CID2, `nCmd` → CID1.
+
+### 6.0 Authenticated Write — `CID1=0x22H, CID2=0x00H` ← **the real EPC write command on this hardware**
+- **Effect**: writes to a tag memory bank with EPC Gen2 access password authentication. This is the command the vendor demo app actually sends for write operations. The documented `CID1=0x12H` write (§4.6) is **not recognized** by this reader — it produces no response.
+- **Frame**: `7C FF FF 22 00 [LEN] [PW0][PW1][PW2][PW3] [MB] [SA] [DL] [DATA...] [CHKSUM]`
+  - `PW` = 4-byte access password. `0x00000000` for unprotected tags.
+  - `MB` = memory bank (`01`=EPC, same codes as §4.6).
+  - `SA` = start address in **words** (not bytes). Word 0=CRC, Word 1=PC, Word 2=first EPC data word.
+  - `DL` = data length in **words**.
+  - `DATA` = `DL × 2` bytes to write.
+- **Resp**: `CC FF FF 22 [RTN] [LEN] [AN][PC_H][PC_L][old-EPC...] [CHKSUM]`
+  - RTN=`00H` = success. Response INFO contains the tag's **old EPC** (before the write), not the new one. Use RTN for success detection; the old EPC can be ignored.
+  - RTN=`01H` = fail (no tag, wrong password, locked memory, etc.).
+- **Observed frame (vendor demo app, writing 12×0xFF to a chip):**
+  ```
+  CMD: 7C FF FF 22 00 13  00 00 00 00  01 02 06  FF FF FF FF FF FF FF FF FF FF FF FF  54
+       ^^^^^^^^^^^^ ^^^^  ^^^^^^^^^^^^^^^^^^  ^^ ^^ ^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  ^^
+       header       LEN   password=0          MB SA DL  12 bytes of new EPC data             CHKSUM
+  RSP: CC FF FF 22 00 0F  00 30 00  01 02 03 04 05 06 07 08 09 00 A0 01  07
+       ^^^^^^^^^^^^ ^^^^  ^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  ^^
+       header       LEN   AN+PC     old EPC (12 bytes)                       CHKSUM
+  ```
+- **Bib programming frame (full 96-bit EPC, 6 words at word 2):**
+  `7C FF FF 22 00 13  00 00 00 00  01 02 06  4F 53 BH BL 00 00 00 00 00 00 00 00  [CHKSUM]`
+  LEN=0x13=19: password(4)+MB(1)+SA(1)+DL(1)+data(12). DL=06 writes all 6 EPC words (matches the vendor demo app). First 4 bytes encode the bib; remaining 8 bytes are zeroed (zeros read as intentionally empty; FFs are indistinguishable from factory-blank / unwritten data). Writing only DL=02 produces a false RTN=0x00 from the reader but no actual write lands on the chip (confirmed 2026-07-08).
+- **Source**: USB traffic capture of `ADDeviceReader` vendor demo app, 2026-07-07. Confirmed as the only write command the reader responds to.
+
+### 6.1 On-Demand Single Scan — `CID1=0x20H, CID2=0x00H` (command form)
+- **Effect**: triggers one inventory round and returns whatever tag is found, or a "no tag" response. The vendor demo app uses this in a polling loop (~80ms interval) rather than CtrlAutoRead. Both CID1=0x20 command (SOI=7C) and CID1=0x20 push notification (SOI=CC) share the same CID1; distinguish by SOI byte.
+- **Frame** (no INFO): `7C FF FF 20 00 00 66`
+- **Responses observed in USB trace:**
+  - Tag found (RTN=0x02): `CC FF FF 20 02 [LEN] [AN][PC_H][PC_L][EPC...][RSSI] [CHKSUM]` — same INFO layout as BLE push frames (§7.1), but RTN=0x02 instead of the 0x05 seen over BLE.
+  - No tag (RTN=0x01): `CC FF FF 20 01 01 [status] [CHKSUM]` — 1-byte INFO, meaning TBD.
+  - Cycle complete (RTN=0x00): `CC FF FF 20 00 02 00 01 [CHKSUM]` — 2-byte INFO, appears after each tag-found response in USB mode.
+- **BLE vs USB push frame RTN difference**: BLE active-mode push frames have RTN=0x05; USB polling responses have RTN=0x02 for tag-found. Both use the same INFO byte layout. The RTN difference may reflect different scan-loop modes.
+- **Used in bib programming (2026-07-08)**: the write flow polls with CID1=0x20 in command mode to singulate the chip, then immediately sends CID1=0x22 write to the held-singulated tag. Sending CID1=0x22 without a prior poll causes false RTN=0x00 — the reader accepts the frame but no tag is singulated, so no write occurs on the chip.
+
+### 6.2 Stop Auto Read — `CID1=0x33H, CID2=0x00H`
+- **Effect**: immediately stops the Active-mode scan loop. Reader goes quiet (Command-mode-like behavior).
+- **Frame** (no INFO): `7C FF FF 33 00 00 [CHKSUM]`
+  - With auto-sign in `sendRawHex`: send `7CFFFF330000` (6 bytes, LENGTH=0).
+- **Resp**: CID1=`33H`, RTN=`00H` (assumed — unverified against hardware).
+- **Source**: `AdpmmCommand.StopAutoRead` — IL: `BuildCmdPacketByte(nType=0, nCmd=51=0x33)`.
+- **⚠ NOT RECOGNIZED on this hardware (2026-07-07 empirical):** Sending `7CFFFF330000` produces zero response. Use CtrlAutoRead(status=0) (§6.4) instead.
+
+### 6.3 Start Auto Read — `CID1=0x32H, CID2=0x00H`
+- **Effect**: starts (or restarts) the Active-mode auto-broadcast scan loop with explicit parameters.
+- **Frame** (5-byte INFO): `7C FF FF 32 00 05 [type] [cycle] [mtime] [mtnu_H] [mtnu_L] [CHKSUM]`
+  - 7-byte INFO form also exists: appends `[ant_H] [ant_L]` for explicit antenna selection.
+- **Source**: `AdpmmCommand.StartAutoRead(type, cycle, mtime, mtnu[, ant])` — IL: `BuildCmdPacketByte(nType=0, nCmd=50=0x32)`.
+
+### 6.4 Control Auto Read — `CID1=0x34H, CID2=0x00H` ← **only confirmed working stop/start command on this hardware**
+- **Effect**: starts or stops the scan loop with a single status byte. No parameter knowledge required.
+- **Frame**: `7C FF FF 34 00 01 [status] [CHKSUM]`
+  - `status=0x01` → start (resume) auto read: `7CFFFF34000101` + auto-sign.
+  - `status=0x00` → stop auto read: `7CFFFF34000100` + auto-sign.
+- **Resp**: `CC FF FF 34 00 00 02` (CID1=`34H`, RTN=`00H`=success, LENGTH=0) — **confirmed empirically 2026-07-07** (status=1 case). status=0 response not yet observed but expected identical.
+- **Source**: `AdpmmCommand.CtrlAutoRead(int32 status)` — IL: `BuildCmdPacketByte(nType=0, nCmd=52=0x34)`, 1-byte INFO = status.
+- **Constraint**: only works when `WM=0x02` is in flash (factory default). Writing `WM=0x01` via SET Parameters and then sending CtrlAutoRead(1) does not restart the scan loop. **Never write WM to flash** — use CtrlAutoRead exclusively for runtime control.
+
+### Why the Documented Commands Fail on This Hardware
+
+**Write (§4.6, CID1=0x12)**: produces no response. The actual write command is CID1=0x22 (§6.0), which prepends a 4-byte access password.
+
+**Mode switch (SET Parameters WM + software reset)**: SET only persists flash; it does not restart the scan loop. Writing WM=0x01 to flash then breaks CtrlAutoRead(1) until next reboot. Fix: never write WM to flash; use CtrlAutoRead(0/1) exclusively. StopAutoRead (§6.2) was tried and is also not recognized.
+
+---
+
+## 7. Set Aside — NOT in This Manual
 
 These are things the existing codebase relies on that this manual does **not** document anywhere. The reader is a cheap clone and may genuinely deviate from or extend this spec, so "not in the manual" isn't the same as "wrong" — these stay open until verified empirically, one way or the other.
 
