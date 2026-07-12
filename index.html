@@ -202,12 +202,13 @@
                         <button id="startBibProgBtn" class="btn" onclick="app.toggleBibProgrammingSession()">Start Programming Session</button>
                     </div>
                     <div id="bibProgrammingControls" style="display: none; background: #002200; padding: 15px; border-radius: 5px; border: 1px solid var(--accent);">
-                        <p style="margin: 0 0 10px; font-size: 12px; color: var(--accent);">Reader is quiet. Enter bib, hold ONE chip near reader, then click Write — it will detect and program the chip (up to 5s).</p>
+                        <p style="margin: 0 0 10px; font-size: 12px; color: var(--accent);">Keep chip pile &gt;50cm away. Hold ONE chip near reader. Enter bib, click Write (detects + programs, up to 5s). Use "Scan to Verify" to check any chip without writing.</p>
                         <div class="form-group">
                             <label for="bibProgBibNum" style="font-size: 12px;">Bib Number to Write</label>
                             <div style="display: flex; gap: 10px;">
                                 <input type="number" id="bibProgBibNum" placeholder="e.g. 104" min="1" max="65535">
                                 <button class="btn" onclick="app.writeBibToChip()">Write to Chip</button>
+                                <button class="btn" onclick="app.verifyBibChip()">Scan to Verify</button>
                             </div>
                         </div>
                         <div id="bibProgStatus" style="font-size: 12px; color: var(--data); min-height: 20px; margin-top: 5px;"></div>
