@@ -564,8 +564,10 @@ class AppUI {
             }
             const elapsedMs = new Date(bestRead.timestamp).getTime() - raceStartMs;
             const epcBib = this.decodeBibFromEpc(hex);
+            const bib = epcBib !== null ? epcBib : chipToBib[hex];
+            if (bib === undefined) return; // no OS encoding and no chip_map entry — skip noise
             results[hex] = {
-                bib: epcBib !== null ? epcBib : (chipToBib[hex] ?? 'UNKNOWN'),
+                bib,
                 elapsedMs,
                 elapsed: this.formatTime(elapsedMs),
                 wallClock: this.formatWallClock(bestRead.timestamp),

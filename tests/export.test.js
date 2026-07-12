@@ -50,65 +50,69 @@ describe('AppUI.buildResultsFromReads()', () => {
         return { tag_hex: tag, rssi, timestamp: new Date(START + offsetMs).toISOString() };
     }
 
+    // OS-encoded EPCs used throughout — only OS-encoded and chip-mapped tags appear in results.
+    const OS1 = '4F530001' + '00'.repeat(8); // bib 1
+    const OS2 = '4F530002' + '00'.repeat(8); // bib 2
+
     it('picks the highest-RSSI read within the 10s window', () => {
         const reads = [
-            makeRead('TAG1', -70, 0),
-            makeRead('TAG1', -50, 3000),   // best RSSI, still in window
-            makeRead('TAG1', -60, 7000),
+            makeRead(OS1, -70, 0),
+            makeRead(OS1, -50, 3000),   // best RSSI, still in window
+            makeRead(OS1, -60, 7000),
         ];
         const results = ui.buildResultsFromReads(reads, [], START);
-        expect(results['TAG1'].elapsedMs).toBe(3000);
+        expect(results[OS1].elapsedMs).toBe(3000);
     });
 
     it('ignores reads outside the 10s window when selecting peak RSSI', () => {
         const reads = [
-            makeRead('TAG1', -70, 0),
-            makeRead('TAG1', -50, 11000),  // after window — should NOT become the best
+            makeRead(OS1, -70, 0),
+            makeRead(OS1, -50, 11000),  // after window — should NOT become the best
         ];
         const results = ui.buildResultsFromReads(reads, [], START);
-        expect(results['TAG1'].elapsedMs).toBe(0); // first read wins since -50 is excluded
+        expect(results[OS1].elapsedMs).toBe(0); // first read wins since -50 is excluded
     });
 
     it('computes elapsedMs correctly from the best read timestamp and raceStartMs', () => {
-        const reads = [makeRead('TAG1', -70, 5234)];
+        const reads = [makeRead(OS1, -70, 5234)];
         const results = ui.buildResultsFromReads(reads, [], START);
-        expect(results['TAG1'].elapsedMs).toBe(5234);
+        expect(results[OS1].elapsedMs).toBe(5234);
     });
 
     it('formats elapsed as HH:MM:SS via formatTime', () => {
-        const reads = [makeRead('TAG1', -70, 75000)]; // 1m 15s
+        const reads = [makeRead(OS1, -70, 75000)]; // 1m 15s
         const results = ui.buildResultsFromReads(reads, [], START);
-        expect(results['TAG1'].elapsed).toBe('00:01:15');
+        expect(results[OS1].elapsed).toBe('00:01:15');
     });
 
     it('includes a wallClock field in HH:MM:SS.mmm format', () => {
-        const reads = [makeRead('TAG1', -70, 0)];
+        const reads = [makeRead(OS1, -70, 0)];
         const results = ui.buildResultsFromReads(reads, [], START);
-        expect(results['TAG1'].wallClock).toMatch(/^\d{2}:\d{2}:\d{2}\.\d{3}$/);
+        expect(results[OS1].wallClock).toMatch(/^\d{2}:\d{2}:\d{2}\.\d{3}$/);
     });
 
-    it('looks up bib from maps by chip_hex', () => {
+    it('looks up bib from chip_map for non-OS-encoded chips', () => {
         const reads = [makeRead('AABBCCDD', -70, 1000)];
         const maps = [{ chip_hex: 'AABBCCDD', bib_num: 104 }];
         const results = ui.buildResultsFromReads(reads, maps, START);
         expect(results['AABBCCDD'].bib).toBe(104);
     });
 
-    it('uses "UNKNOWN" when no bib mapping exists', () => {
+    it('excludes chips with no OS encoding and no chip_map entry — no UNKNOWN rows in results', () => {
         const reads = [makeRead('DEADBEEF', -70, 1000)];
         const results = ui.buildResultsFromReads(reads, [], START);
-        expect(results['DEADBEEF'].bib).toBe('UNKNOWN');
+        expect(results['DEADBEEF']).toBeUndefined();
     });
 
     it('handles multiple independent tags correctly', () => {
         const reads = [
-            makeRead('TAG1', -70, 1000),
-            makeRead('TAG2', -60, 2000),
+            makeRead(OS1, -70, 1000),
+            makeRead(OS2, -60, 2000),
         ];
         const results = ui.buildResultsFromReads(reads, [], START);
         expect(Object.keys(results)).toHaveLength(2);
-        expect(results['TAG1'].elapsedMs).toBe(1000);
-        expect(results['TAG2'].elapsedMs).toBe(2000);
+        expect(results[OS1].elapsedMs).toBe(1000);
+        expect(results[OS2].elapsedMs).toBe(2000);
     });
 });
 
@@ -169,11 +173,19 @@ describe('AppUI.buildResultsFromReads() — EPC-encoded bib', () => {
         expect(results[epc].bib).toBe(42);
     });
 
-    it('returns UNKNOWN when EPC has no magic prefix and no chip_map entry', () => {
+    it('excludes chips with no OS encoding and no chip_map entry — no UNKNOWN rows in results', () => {
         const epc = 'AABBCCDDEEFF001122334455';
         const reads = [makeRead(epc, -60, 1000)];
         const results = ui.buildResultsFromReads(reads, [], START);
-        expect(results[epc].bib).toBe('UNKNOWN');
+        expect(results[epc]).toBeUndefined();
+    });
+
+    it('includes OS-encoded chips even when they have no chip_map entry', () => {
+        const epc = '4F530068' + '00'.repeat(8); // bib 104, no chip_map
+        const reads = [makeRead(epc, -60, 1000)];
+        const results = ui.buildResultsFromReads(reads, [], START);
+        expect(results[epc]).toBeDefined();
+        expect(results[epc].bib).toBe(104);
     });
 });
 
