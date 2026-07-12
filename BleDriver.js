@@ -249,30 +249,50 @@ class BleDriver {
         return bytes.map(b => b.toString(16).padStart(2, '0').toUpperCase()).join('');
     }
 
+    // Polls once for a chip in command mode. Returns decodeTagFrame result or null on timeout.
+    // Used for the post-write verify step in writeBibToEpc and the standalone Scan to Verify button.
+    async scanForTag(timeoutMs = 5000, pollIntervalMs = 300) {
+        const maxAttempts = Math.max(1, Math.ceil(timeoutMs / pollIntervalMs));
+        for (let i = 0; i < maxAttempts; i++) {
+            try {
+                const frame = await this.sendCommand('7CFFFF200000', 0x20, pollIntervalMs);
+                const decoded = this.decodeTagFrame(frame);
+                if (decoded && decoded.epcHex) return decoded;
+            } catch (e) { }
+        }
+        return null;
+    }
+
     // Writes a bib number into the chip's EPC bank with a 0x4F53 ("OS") magic prefix.
     // Returns {success, message}.
     //
     // Protocol: CID1=0x22 authenticated write (MM-reader extension, vendor USB trace 2026-07-07).
     // CID1=0x12 (documented spec) gets no response from this reader.
     //
-    // Singulation: must poll with CID1=0x20 FIRST to singulate the tag, then write immediately.
-    // Sending CID1=0x22 without a prior poll causes false RTN=0x00 (reader accepts the frame
-    // but no tag is singulated, so the write never reaches the chip). Confirmed 2026-07-08.
+    // Flow (3 steps):
+    //   1. Poll (CID1=0x20) — singulates the tag. Retry up to totalWaitMs.
+    //   2. Write (CID1=0x22) — writes while the tag is still singulated.
+    //   3. Verify (scanForTag) — reads back EPC and checks the bib matches.
+    //      Adjacent chip interference (EPC Gen2 anti-collision randomly picks among in-range chips)
+    //      causes the wrong chip to be written. The verify step catches this: if the decoded bib
+    //      doesn't match bibNum, returns {success: false} with a WRONG CHIP message.
+    //      If verify times out (chip moved away too fast), degrades to plain success — no new failure state.
     //
-    // Frame: 7C FF FF 22 00 13  00000000  01 02 06  4F53BHBL FFFFFFFFFFFFFFFF  [CHKSUM]
+    // Singulation requirement: sending CID1=0x22 without a prior CID1=0x20 poll causes false
+    // RTN=0x00 — reader accepts the frame but no write reaches the chip. Confirmed 2026-07-08.
+    //
+    // Frame: 7C FF FF 22 00 13  00000000  01 02 06  4F53BHBL 0000000000000000  [CHKSUM]
     //   password=00000000, MB=01 (EPC bank), SA=02 (word offset 2 = first EPC word),
-    //   DL=06 (6 words = full 96-bit EPC), first 4 bytes=bib encoding, rest=FFs
+    //   DL=06 (6 words = full 96-bit EPC), first 4 bytes=bib encoding, rest=00s
     // Response: RTN=0x00 success + old EPC (ignored).
     async writeBibToEpc(bibNum, totalWaitMs = 5000, pollIntervalMs = 300) {
         const bh = (bibNum >> 8) & 0xFF;
         const bl = bibNum & 0xFF;
         const bhHex = bh.toString(16).padStart(2, '0').toUpperCase();
         const blHex = bl.toString(16).padStart(2, '0').toUpperCase();
-        // 7C FF FF 22 00 13  00000000  01 02 06  4F53BHBL FFFFFFFFFFFFFFFF  [CHKSUM]
         const writeHex = `7CFFFF220013000000000102064F53${bhHex}${blHex}0000000000000000`;
 
         // Step 1: Poll for a singulated tag (reader must be in command mode).
-        // Retry every pollIntervalMs up to totalWaitMs total.
         const maxAttempts = Math.max(1, Math.ceil(totalWaitMs / pollIntervalMs));
         let found = false;
         for (let i = 0; i < maxAttempts; i++) {
@@ -293,6 +313,23 @@ class BleDriver {
             await this.sendCommand(writeHex, 0x22);
         } catch (e) {
             return { success: false, message: e.message };
+        }
+
+        // Step 3: Verify — re-poll and confirm the correct bib was written.
+        // Catches adjacent chip interference (wrong chip singulated during step 1).
+        // Timeout degrades to plain success — chip moved away too fast, not a write failure.
+        const verify = await this.scanForTag(2000, 400);
+        if (verify) {
+            const hex = verify.epcHex.toUpperCase();
+            const readBib = (hex.length >= 8 && hex.slice(0, 4) === '4F53')
+                ? parseInt(hex.slice(4, 8), 16)
+                : null;
+            if (readBib === bibNum) {
+                return { success: true, message: `Bib ${bibNum} written and verified.` };
+            }
+            if (readBib !== null) {
+                return { success: false, message: `WRONG CHIP: chip reads bib ${readBib}, not ${bibNum} — keep only ONE chip near reader.` };
+            }
         }
         return { success: true, message: `Bib ${bibNum} written.` };
     }

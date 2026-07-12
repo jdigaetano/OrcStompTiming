@@ -501,6 +501,22 @@ class AppUI {
         }
     }
 
+    async verifyBibChip() {
+        const statusEl = document.getElementById('bibProgStatus');
+        if (statusEl) statusEl.textContent = 'Scanning… wave chip near reader (up to 5s)';
+        const result = await this.driver.scanForTag(5000);
+        if (!result) {
+            if (statusEl) statusEl.textContent = 'No chip detected.';
+            return;
+        }
+        const bib = this.decodeBibFromEpc(result.epcHex);
+        if (bib !== null) {
+            if (statusEl) statusEl.textContent = `BIB: ${bib} (OrcStomp encoded, ${result.rssiDbm} dBm)`;
+        } else {
+            if (statusEl) statusEl.textContent = `Not programmed — EPC: ${result.epcHex}`;
+        }
+    }
+
     handleVisibilityChange() {
         if (document.hidden) {
             this.sysLog('Tab hidden — BLE reads continue, display throttled by browser.');
@@ -548,8 +564,10 @@ class AppUI {
             }
             const elapsedMs = new Date(bestRead.timestamp).getTime() - raceStartMs;
             const epcBib = this.decodeBibFromEpc(hex);
+            const bib = epcBib !== null ? epcBib : chipToBib[hex];
+            if (bib === undefined) return; // no OS encoding and no chip_map entry — skip noise
             results[hex] = {
-                bib: epcBib !== null ? epcBib : (chipToBib[hex] ?? 'UNKNOWN'),
+                bib,
                 elapsedMs,
                 elapsed: this.formatTime(elapsedMs),
                 wallClock: this.formatWallClock(bestRead.timestamp),
