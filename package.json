@@ -15,8 +15,5 @@
     "http-server": "^14.1.1",
     "kill-port": "^2.0.1",
     "vitest": "^0.34.6"
-  },
-  "allowScripts": {
-    "esbuild@0.21.5": true
   }
 }

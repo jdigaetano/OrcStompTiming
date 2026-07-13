@@ -65,7 +65,6 @@ class TimingEngine {
             tag_hex: tagHex,
             rssi: rssi,
             timestamp: now.toISOString(),
-            elapsed_ms: now.getTime() - new Date(this.raceStartTime).getTime(),
         };
 
         // High-speed producer push

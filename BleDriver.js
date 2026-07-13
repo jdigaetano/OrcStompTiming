@@ -107,7 +107,7 @@ class BleDriver {
                 const chars = await service.getCharacteristics();
                 for (const c of chars) {
                     if (c.uuid.includes('ffe2')) this.notifyCharacteristic = c;
-                    if (c.uuid.includes('ffe3') || c.uuid.includes('ffe1')) {
+                    if (c.uuid.includes('ffe1')) {
                         if (c.properties.write || c.properties.writeWithoutResponse) {
                             this.writeCharacteristic = c;
                         }
@@ -130,7 +130,6 @@ class BleDriver {
 
             this.updateStatus("READER ONLINE", true);
             this.isAutoReconnecting = false;
-            console.log("BleDriver: Pipes established. Write:", this.writeCharacteristic?.uuid, "Read:", this.notifyCharacteristic?.uuid);
             return true;
         } catch (error) {
             this.updateStatus(`Connection Error: ${error.message}`, false);
@@ -334,32 +333,6 @@ class BleDriver {
         return { success: true, message: `Bib ${bibNum} written.` };
     }
 
-    // WM byte position in the 28-byte Basic Parameters INFO block (PROTOCOL_SPEC.md §4.8):
-    // PW(0) FHE(1) FFV(2) FHV1-FHV6(3-8) WM(9) ...
-    static get WM_INDEX() { return 9; }
-
-    async getReaderParameters() {
-        const frame = await this.sendCommand('7CFFFF813200', 0x81);
-        // Use the actual LEN byte (frame[5]) — this hardware returns 27 bytes (0x1B),
-        // not 28 (0x1C) as the spec says. Hardcoding 34 accidentally included the checksum.
-        return frame.slice(6, 6 + frame[5]);
-    }
-
-    async setReaderParameters(paramBytes) {
-        // The spec defines Set Parameters with LEN=0x1C (28 bytes). This hardware's
-        // Get returns only 27 bytes, but Set MUST send 28 — sending 27 returns RTN=00
-        // but is silently ignored. The missing 28th byte is MR (Max tags per read
-        // cycle, §4.8); padding with 0x00 is out of the valid range (10–64) and
-        // causes the reader to silently discard the flash write while returning RTN=00.
-        const padded = new Uint8Array(28);
-        padded[27] = 0x0A; // MR = 10 (minimum valid; overwritten if caller supplied 28 bytes)
-        padded.set(paramBytes.slice(0, 28));
-        const header = [0x7C, 0xFF, 0xFF, 0x81, 0x31, 0x1C];
-        const allBytes = [...header, ...padded];
-        const hex = allBytes.map(b => b.toString(16).padStart(2, '0').toUpperCase()).join('');
-        await this.sendCommand(hex, 0x81);
-    }
-
     // CtrlAutoRead-only approach — never writes WM to flash.
     // WM=0x02 stays in flash (factory default) so CtrlAutoRead(1) always reliably
     // restarts the scan loop. Writing WM=0x01 to flash breaks CtrlAutoRead(1) until
@@ -405,15 +378,10 @@ class BleDriver {
             for (let b of bytes) sum += b;
             const checksum = ((~sum) + 1) & 0xFF;
             finalHex += checksum.toString(16).padStart(2, '0').toUpperCase();
-            console.log("BleDriver: Auto-signed (Two's Complement):", finalHex);
         }
 
         const data = new Uint8Array(finalHex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
-        try {
-            await this.writeCharacteristic.writeValueWithoutResponse(data);
-        } catch (e) {
-            await this.writeCharacteristic.writeValue(data);
-        }
+        await this.writeCharacteristic.writeValueWithoutResponse(data);
     }
 
     updateStatus(msg, connected) {
