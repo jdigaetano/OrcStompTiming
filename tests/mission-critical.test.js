@@ -65,7 +65,7 @@ describe('Mission Critical: Data Integrity & Recovery', () => {
     });
 
     describe('Dual Timestamps', () => {
-        it('handleIncomingTag() stores both an ISO wall-clock timestamp and elapsed_ms', async () => {
+        it('handleIncomingTag() stores an ISO wall-clock timestamp (elapsed_ms is recomputed from timestamp at export time, not stored)', async () => {
             const startIso = new Date(Date.now() - 5000).toISOString();
             engine.raceStartTime = startIso;
             engine.isTrackingRace = true;
@@ -76,9 +76,7 @@ describe('Mission Critical: Data Integrity & Recovery', () => {
             const reads = await engine.getAllFromStore('race_reads');
             expect(reads).toHaveLength(1);
             expect(reads[0].timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
-            expect(typeof reads[0].elapsed_ms).toBe('number');
-            expect(reads[0].elapsed_ms).toBeGreaterThanOrEqual(5000);
-            expect(reads[0].elapsed_ms).toBeLessThan(6000);
+            expect(reads[0].elapsed_ms).toBeUndefined();
         });
     });
 

@@ -73,8 +73,7 @@
         <div>
             <button id="chooseBackupBtn" class="btn" style="padding: 4px 8px; font-size: 10px; border-color: #555; color: #555;" onclick="app.chooseBackupLocation()">CHOOSE BACKUP LOCATION</button>
             <span id="backupLocationLabel" style="color: var(--text-dim); font-size: 10px; margin-left: 8px;">No backup location set</span>
-            <button id="mockToggleBtn" class="btn" style="padding: 4px 8px; font-size: 10px; border-color: #555; color: #555; margin-left: 10px;" onclick="app.toggleMockMode()">ENABLE MOCK MODE</button>
-            <span style="color: var(--text-dim); font-size: 10px; margin-left: 10px;">v1.4.3</span>
+<span style="color: var(--text-dim); font-size: 10px; margin-left: 10px;">v1.4.3</span>
         </div>
     </div>
 
@@ -108,7 +107,7 @@
         <div class="grid-2">
             <div>
                 <h3>Live Feed Log</h3>
-                <div id="consoleLog" class="console-log">System initialized...</div>
+                <div id="consoleLog" class="console-log"></div>
             </div>
             <div>
                 <h3>Raw Ingestion Metrics</h3>
@@ -207,7 +206,7 @@
                             <label for="bibProgBibNum" style="font-size: 12px;">Bib Number to Write</label>
                             <div style="display: flex; gap: 10px;">
                                 <input type="number" id="bibProgBibNum" placeholder="e.g. 104" min="1" max="65535">
-                                <button class="btn" onclick="app.writeBibToChip()">Write to Chip</button>
+                                <button class="btn" onclick="app.writeBibToScannedTag()">Write to Chip</button>
                                 <button class="btn" onclick="app.verifyBibChip()">Scan to Verify</button>
                             </div>
                         </div>
@@ -216,35 +215,6 @@
                     </div>
                 </div>
 
-                <div style="margin-top: 20px;">
-                    <h3>Pro Diagnostics</h3>
-                    <div style="display: flex; gap: 5px; flex-wrap: wrap; margin-bottom: 15px;">
-                        <button id="modeAnswerBtn" class="btn" onclick="app.switchToCommandMode()" style="font-size: 10px; color: var(--accent); border-color: var(--accent);">Switch to ANSWER MODE</button>
-                        <button id="modeActiveBtn" class="btn" onclick="app.switchToActiveMode()" style="font-size: 10px;">Switch to ACTIVE MODE</button>
-                        <button id="getVersionBtn" class="btn" onclick="app.sendManualCommand(false, '7CFFFF823200')" style="font-size: 10px;" disabled>Get Version</button>
-                        <button id="readTidBtn" class="btn" onclick="app.sendManualCommand(false, '7CFFFF123203020006')" style="font-size: 10px;" disabled>Read TID (Bank 2)</button>
-                    </div>
-
-                    <h3>Manual Command (Advanced) <span style="font-size: 10px; color: #888; font-weight: normal;">(WIP — disabled, see KNOWN_ISSUES.md)</span></h3>
-                    <div class="form-group">
-                        <label for="manualCmdHex" style="font-size: 12px; color: var(--text-dim);">Enter Hex Command (No Header/Checksum needed if using Auto-Check)</label>
-                        <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                            <input type="text" id="manualCmdHex" placeholder="823200" style="width: 100%;" disabled>
-                            <button id="sendCmdBtn" class="btn" onclick="app.sendManualCommand(false)" style="font-size: 10px;" disabled>Send with Auto-Check</button>
-                            <button id="sendRawBtn" class="btn btn-danger" onclick="app.sendManualCommand(true)" style="font-size: 10px;" disabled>Send RAW HEX</button>
-                        </div>
-                    </div>
-                    <p style="font-size: 11px; color: var(--error);">DANGER: Incorrect commands can brick or reset reader settings.</p>
-                </div>
-
-                <div style="margin-top: 20px; border-top: 1px solid #333; padding-top: 15px;">
-                    <h3>Bit-Search Decoder <span style="font-size: 10px; color: #888; font-weight: normal;">(WIP — disabled, see KNOWN_ISSUES.md)</span></h3>
-                    <div class="form-group">
-                        <label style="font-size: 12px; color: var(--text-dim);">Target Bib to Find</label>
-                        <input type="number" id="searchBibNum" placeholder="e.g. 982" oninput="app.runBitSearch()" disabled>
-                    </div>
-                    <div id="bitSearchResults" style="font-size: 11px; color: var(--data); font-family: monospace;"></div>
-                </div>
             </div>
 
             <div>
@@ -268,8 +238,7 @@
 
     <!-- Architectural Scripts -->
     <script src="BleDriver.js"></script>
-    <script src="MockBleDriver.js"></script>
-    <script src="TimingEngine.js"></script>
+<script src="TimingEngine.js"></script>
     <script src="AppUI.js"></script>
 
     <script>
@@ -294,52 +263,6 @@
             const forgetBtn = document.getElementById('forgetDeviceBtn');
             if (forgetBtn) forgetBtn.style.display = 'none';
             app.sysLog('SYSTEM: Saved device forgotten — next connect will use the device picker.');
-        };
-
-        app.toggleMockMode = () => {
-            const btn = document.getElementById('mockToggleBtn');
-            const isMocking = btn.textContent.includes('DISABLE');
-
-            if (!isMocking) {
-                // Switch to Mock
-                if (driver.device && driver.device.gatt.connected) driver.disconnect();
-                driver = new MockBleDriver();
-                btn.textContent = "DISABLE MOCK MODE";
-                btn.style.borderColor = "var(--data)";
-                btn.style.color = "var(--data)";
-                app.sysLog("SYSTEM: Switched to Mock Driver.");
-            } else {
-                // Switch to Real
-                driver = new BleDriver();
-                btn.textContent = "ENABLE MOCK MODE";
-                btn.style.borderColor = "#555";
-                btn.style.color = "#555";
-                app.sysLog("SYSTEM: Switched to Real Bluetooth Driver.");
-            }
-
-            // Re-bind the new driver to the UI and Engine
-            app.driver = driver;
-            app.setupBindings();
-
-            if (!isMocking) {
-                app.sysLog("MOCK: Click [Simulate] in log to fire test data.");
-                const log = document.getElementById('consoleLog');
-                log.innerHTML += `<br><button class="btn" style="padding:4px; font-size:10px;" onclick="app.runMockScenario()">Simulate 10s Window (Peak RSSI Test)</button>`;
-            }
-        };
-
-        app.runMockScenario = async () => {
-            if (!(driver instanceof MockBleDriver)) return;
-            app.sysLog("MOCK: Starting 10s Peak RSSI scenario...");
-            const scenario = [
-                { epcHex: 'AABBCCDDEEFF001122334455', rssi: -70, delay: 0 },
-                { epcHex: 'AABBCCDDEEFF001122334455', rssi: -50, delay: 2000 },
-                { epcHex: 'AABBCCDDEEFF001122334455', rssi: -30, delay: 3000 },
-                { epcHex: 'AABBCCDDEEFF001122334455', rssi: -55, delay: 2000 },
-                { epcHex: 'AABBCCDDEEFF001122334455', rssi: -90, delay: 5000 },
-            ];
-            await driver.playSequence(scenario);
-            app.sysLog("MOCK: Sequence complete.");
         };
 
         app.switchTab = (id, el) => {
@@ -444,65 +367,10 @@
             event.target.value = '';
         };
 
-        app.sendManualCommand = async (isRaw, overrideHex) => {
-            const input = document.getElementById('manualCmdHex');
-            let hex = (overrideHex || input.value).trim();
-            if (!hex) return;
-            try {
-                if (isRaw) {
-                    const data = new Uint8Array(hex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
-                    await driver.writeCharacteristic.writeValue(data);
-                    app.sysLog(`SENT RAW: ${hex}`);
-                } else {
-                    // Ensure it has 7CFFFF header if not already there
-                    if (!hex.startsWith('7C')) hex = '7CFFFF' + hex;
-                    await driver.sendRawHex(hex);
-                    app.sysLog(`SENT CMD: ${hex}`);
-                }
-                if (!overrideHex) input.value = '';
-            } catch (e) {
-                app.sysLog(`SEND ERROR: ${e.message}`, true);
-            }
-        };
-
-        app.runBitSearch = () => {
-            const bib = parseInt(document.getElementById('searchBibNum').value);
-            const resultsEl = document.getElementById('bitSearchResults');
-            if (isNaN(bib)) return resultsEl.innerHTML = "";
-
-            // Pulled from the TAG READ DECODE panel's EPC field (only present for tag-read frames)
-            const rawEpc = document.getElementById('inspectorEpcHex')?.textContent;
-            if (!rawEpc) return resultsEl.innerHTML = "No tag data to search.";
-
-            const binary = rawEpc.match(/.{1,2}/g).map(b => parseInt(b, 16).toString(2).padStart(8, '0')).join('');
-            const bibBinary = bib.toString(2);
-
-            const index = binary.indexOf(bibBinary);
-            if (index !== -1) {
-                resultsEl.innerHTML = `<span style="color:var(--accent)">MATCH!</span> Bib ${bib} found at bit offset ${index}.`;
-            } else {
-                resultsEl.innerHTML = `Bib ${bib} bits not found in EPC.`;
-            }
-        };
-
         app.toggleBibProgrammingSession = async () => {
             const btn = document.getElementById('startBibProgBtn');
             const isActive = btn && btn.textContent.includes('End');
             await app.setBibProgrammingMode(!isActive);
-        };
-
-        app.writeBibToChip = async () => {
-            await app.writeBibToScannedTag();
-        };
-
-        app.switchToCommandMode = async () => {
-            try { await driver.setWorkMode('command'); app.sysLog('SYSTEM: Reader in Command mode.'); }
-            catch (e) { app.sysLog(`MODE ERROR: ${e.message}`, true); }
-        };
-
-        app.switchToActiveMode = async () => {
-            try { await driver.setWorkMode('active'); app.sysLog('SYSTEM: Reader in Active mode.'); }
-            catch (e) { app.sysLog(`MODE ERROR: ${e.message}`, true); }
         };
 
         if ('serviceWorker' in navigator) {

@@ -44,9 +44,7 @@ class AppUI {
             this.updateInspector(payload);
         };
 
-        // Page visibility: stop the visual clock when backgrounded (saves resources and
-        // avoids a frozen display); restart it when foregrounded if the race is active.
-        // Web Bluetooth events fire regardless of visibility, so no tag reads are lost.
+        // Web Bluetooth events fire regardless of tab visibility, so no tag reads are lost.
         this._visibilityHandler = () => this.handleVisibilityChange();
         document.addEventListener('visibilitychange', this._visibilityHandler);
 

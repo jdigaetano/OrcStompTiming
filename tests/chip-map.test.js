@@ -49,8 +49,7 @@ describe('TimingEngine: chip_map persistence', () => {
         expect(maps).toHaveLength(3);
     });
 
-    // ─── Known gap (KNOWN_ISSUES.md #8): re-mapping an already-mapped chip ──
-    it('GAP: silently overwrites an existing chip_hex mapping with no warning or history of the old bib', async () => {
+    it('silently overwrites an existing chip_hex mapping (guardrails are in AppUI.submitMapping, not the engine)', async () => {
         await engine.saveMapping('AABBCCDD', 104);
         await engine.saveMapping('AABBCCDD', 207); // re-map same chip, different bib
         const maps = await engine.getMappings();
@@ -58,8 +57,7 @@ describe('TimingEngine: chip_map persistence', () => {
         expect(maps[0].bib_num).toBe(207);
     });
 
-    // ─── Known gap (KNOWN_ISSUES.md #8): same bib on two different chips ──
-    it('GAP: allows the same bib_num to be assigned to two different chip_hex values with zero enforcement', async () => {
+    it('allows the same bib_num on two different chip_hex values — enforcement is in AppUI.submitMapping, not the engine', async () => {
         await engine.saveMapping('AAAA1111', 104);
         await engine.saveMapping('BBBB2222', 104); // same bib, different chip — should be rejected, isn't
         const maps = await engine.getMappings();

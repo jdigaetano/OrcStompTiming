@@ -23,26 +23,6 @@ describe('Tag Inspector: WIP/dangerous controls are disabled', () => {
         expect(document.getElementById('startBibProgBtn').disabled).toBe(false);
     });
 
-    it('enables the Pro Diagnostics mode-switch buttons (mode switch is now implemented)', () => {
-        expect(document.getElementById('modeAnswerBtn').disabled).toBe(false);
-        expect(document.getElementById('modeActiveBtn').disabled).toBe(false);
-    });
-
-    it('disables the Pro Diagnostics buttons that are still unimplemented (version, TID read)', () => {
-        expect(document.getElementById('getVersionBtn').disabled).toBe(true);
-        expect(document.getElementById('readTidBtn').disabled).toBe(true);
-    });
-
-    it('disables the Manual Command (Advanced) controls', () => {
-        expect(document.getElementById('manualCmdHex').disabled).toBe(true);
-        expect(document.getElementById('sendCmdBtn').disabled).toBe(true);
-        expect(document.getElementById('sendRawBtn').disabled).toBe(true);
-    });
-
-    it('disables the Bit-Search Decoder input', () => {
-        expect(document.getElementById('searchBibNum').disabled).toBe(true);
-    });
-
     it('leaves the passive Tag Inspector display (frame detail + history) untouched', () => {
         expect(document.getElementById('inspectorDetail')).not.toBeNull();
         expect(document.getElementById('inspectorHistoryBody')).not.toBeNull();
