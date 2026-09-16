@@ -85,6 +85,10 @@
 
     <div id="race-tab" class="tab-content active">
         <div class="control-panel">
+            <div id="connectionTypeGroup" style="font-size:12px; margin-bottom:6px; color:var(--text-dim);">
+                <label style="margin-right:12px; cursor:pointer;"><input type="radio" name="connType" value="ble"> Bluetooth</label>
+                <label style="cursor:pointer;"><input type="radio" name="connType" value="usb"> USB</label>
+            </div>
             <button id="connectBtn" class="btn" onclick="app.handleConnectionBtn()">Connect Reader</button>
             <button id="forgetDeviceBtn" class="btn" onclick="app.forgetDevice()" style="display:none; font-size:11px; color:#555; border-color:#555;">Forget Device</button>
             <button id="retryConnectBtn" class="btn" onclick="app.handleRetryBtn()" style="display:none; color:orange; border-color:orange;">Retry Connection</button>
@@ -238,18 +242,47 @@
 
     <!-- Architectural Scripts -->
     <script src="BleDriver.js"></script>
-<script src="TimingEngine.js"></script>
+    <script src="HidDriver.js"></script>
+    <script src="TimingEngine.js"></script>
     <script src="AppUI.js"></script>
 
     <script>
         // Orchestration Layer
-        let driver = new BleDriver();
+        const savedConnType = localStorage.getItem('connectionType') || 'ble';
+        let driver = savedConnType === 'usb' ? new HidDriver() : new BleDriver();
         const engine = new TimingEngine();
         let app = new AppUI(engine, driver);
 
+        // Sync radio to saved type
+        const savedRadio = document.querySelector(`input[name="connType"][value="${savedConnType}"]`);
+        if (savedRadio) savedRadio.checked = true;
+
+        // Switch driver when radio changes
+        document.querySelectorAll('input[name="connType"]').forEach(radio => {
+            radio.addEventListener('change', () => {
+                const type = radio.value;
+                localStorage.setItem('connectionType', type);
+                const applySwitch = () => {
+                    driver = type === 'usb' ? new HidDriver() : new BleDriver();
+                    app.setDriver(driver);
+                    const forgetBtn = document.getElementById('forgetDeviceBtn');
+                    if (forgetBtn) forgetBtn.style.display = 'none'; // not relevant until re-connected
+                    const retryNote = document.getElementById('retryConnectNote');
+                    if (retryNote) retryNote.textContent = type === 'usb'
+                        ? 'If still failing: unplug and replug the USB cable, then retry.'
+                        : 'If still failing: toggle Bluetooth off/on in Windows Settings, then retry.';
+                };
+                if (driver.isConnected) {
+                    driver.disconnect().then(applySwitch);
+                } else {
+                    applySwitch();
+                }
+            });
+        });
+
         // Global bridge for inline HTML onclicks
         app.handleConnectionBtn = async () => {
-            if (driver.device && driver.device.gatt.connected) {
+            if (driver.isConnected) {
                 await driver.disconnect();
             } else {
                 const ok = await driver.tryAutoConnect();

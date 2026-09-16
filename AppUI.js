@@ -25,8 +25,8 @@ class AppUI {
         });
     }
 
-    setupBindings() {
-        // Link Driver to Engine & UI
+    setDriver(newDriver) {
+        this.driver = newDriver;
         this.driver.onTagRead = (tag, rssi) => {
             if (this.isKioskMode()) {
                 this.fillKioskForm(tag);
@@ -34,15 +34,18 @@ class AppUI {
                 this.engine.handleIncomingTag(tag, rssi);
             }
         };
-
         this.driver.onStatusChange = (msg, connected) => {
             this.updateBleBadge(msg, connected);
-            this.sysLog(`BLE: ${msg}`, !connected && msg.includes('FAIL'));
+            this.sysLog(`Reader: ${msg}`, !connected && msg.includes('FAIL'));
         };
-
         this.driver.onRawFrame = (payload) => {
             this.updateInspector(payload);
         };
+    }
+
+    setupBindings() {
+        // Link Driver to Engine & UI
+        this.setDriver(this.driver);
 
         // Web Bluetooth events fire regardless of tab visibility, so no tag reads are lost.
         this._visibilityHandler = () => this.handleVisibilityChange();
@@ -80,18 +83,19 @@ class AppUI {
         }
         this.renderMappingTable();
 
-        if (localStorage.getItem('bleDeviceId')) {
-            const savedName = localStorage.getItem('bleDeviceName') || 'saved reader';
-            this.sysLog(`SYSTEM: "${savedName}" was previously connected — attempting auto-connect...`);
-            this.driver.tryAutoConnect()
-                .then(ok => {
-                    if (!ok) this.sysLog('SYSTEM: Saved reader not found — click "Connect Reader" to pair.');
-                })
-                .catch(() => {
-                    // Device was found but GATT failed — retry button is now visible
-                    this.sysLog('SYSTEM: Auto-connect failed — click "Retry Connection" above, or toggle Bluetooth off/on first.');
-                });
+        const savedBleDevice = localStorage.getItem('bleDeviceName');
+        if (savedBleDevice) {
+            this.sysLog(`SYSTEM: "${savedBleDevice}" was previously connected — attempting auto-connect...`);
         }
+        this.driver.tryAutoConnect()
+            .then(ok => {
+                if (!ok && savedBleDevice) {
+                    this.sysLog('SYSTEM: Saved reader not found — click "Connect Reader" to pair.');
+                }
+            })
+            .catch(() => {
+                this.sysLog('SYSTEM: Auto-connect failed — click "Retry Connection" above, or check your connection.');
+            });
     }
 
     // UI Logic Methods

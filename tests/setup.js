@@ -23,3 +23,9 @@ global.navigator.bluetooth = {
     requestDevice: vi.fn(),
     getDevices: vi.fn().mockResolvedValue([]),
 };
+
+// Mock navigator.hid
+global.navigator.hid = {
+    requestDevice: vi.fn(),
+    getDevices: vi.fn().mockResolvedValue([]),
+};
