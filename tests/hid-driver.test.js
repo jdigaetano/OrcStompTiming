@@ -162,21 +162,26 @@ describe('HidDriver', () => {
             expect(driver.device.sendReport).toHaveBeenCalledWith(0, expect.any(Uint8Array));
         });
 
-        it('auto-appends Two\'s Complement checksum for 7C frames missing it', async () => {
+        it('auto-appends Two\'s Complement checksum for 7C frames missing it, padded to 64 bytes', async () => {
             // '7CFFFF34000100' = 7 bytes. LEN byte (index 5) = 0x01, so 6+1=7 = frame without checksum.
-            // Checksum auto-append should add 1 byte → 8 bytes total, sum & 0xFF === 0.
+            // Checksum auto-append adds 1 byte (8 frame bytes), then padded to 64 for HID report size.
             await driver.sendRawHex('7CFFFF34000100');
             const sentData = driver.device.sendReport.mock.calls[0][1];
-            expect(sentData).toHaveLength(8);
+            expect(sentData).toHaveLength(64);
+            // Frame bytes sum to 0 (valid checksum); trailing zeros don't change that
             const sum = Array.from(sentData).reduce((a, b) => a + b, 0);
             expect(sum & 0xFF).toBe(0);
+            // Trailing bytes beyond the frame must be zero
+            expect(Array.from(sentData).slice(8)).toEqual(new Array(56).fill(0));
         });
 
-        it('does not append checksum if frame already has it (length = 6 + LEN + 1)', async () => {
-            // '7CFFFF34000100CB' = 8 bytes, already has checksum byte CB
+        it('does not append checksum if frame already has it, still pads to 64 bytes', async () => {
+            // '7CFFFF34000100CB' = 8 bytes (LEN=1, so 6+1+1=8 = frame already includes checksum slot)
             await driver.sendRawHex('7CFFFF34000100CB');
             const sentData = driver.device.sendReport.mock.calls[0][1];
-            expect(sentData).toHaveLength(8); // unchanged
+            expect(sentData).toHaveLength(64);
+            expect(sentData[0]).toBe(0x7C);
+            expect(Array.from(sentData).slice(8)).toEqual(new Array(56).fill(0));
         });
 
         it('throws if device is null', async () => {

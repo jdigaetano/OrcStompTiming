@@ -192,7 +192,9 @@ class HidDriver {
             finalHex += checksum.toString(16).padStart(2, '0').toUpperCase();
         }
 
-        const data = new Uint8Array(finalHex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+        const frameBytes = finalHex.match(/.{1,2}/g).map(byte => parseInt(byte, 16));
+        const data = new Uint8Array(64); // HID report size must be exactly 64 bytes
+        frameBytes.forEach((b, i) => { data[i] = b; });
         await this.device.sendReport(0, data);
     }
 
