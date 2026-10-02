@@ -55,6 +55,7 @@ class TimingEngine {
 
     restoreSession() {
         this.raceStartTime = localStorage.getItem('raceStartTime');
+        this.isTrackingRace = localStorage.getItem('isTrackingRace') === 'true';
     }
 
     handleIncomingTag(tagHex, rssi) {
@@ -155,6 +156,7 @@ class TimingEngine {
     }
 
     async clearRaceData() {
+        if (!this.db) throw new Error("Database not initialized");
         const tx = this.db.transaction(['race_reads'], 'readwrite');
         tx.objectStore('race_reads').clear();
         localStorage.removeItem('raceStartTime');
@@ -170,6 +172,67 @@ class TimingEngine {
         const tx = this.db.transaction(['chip_map'], 'readwrite');
         tx.objectStore('chip_map').clear();
         return new Promise(r => tx.oncomplete = r);
+    }
+
+    _formatTime(ms) {
+        if (ms < 0) ms = 0;
+        let s = Math.floor(ms / 1000);
+        let h = Math.floor(s / 3600);
+        let m = Math.floor((s % 3600) / 60);
+        s = s % 60;
+        return `${h.toString().padStart(2,'0')}:${m.toString().padStart(2,'0')}:${s.toString().padStart(2,'0')}`;
+    }
+
+    _formatWallClock(isoString) {
+        const d = new Date(isoString);
+        const hh = d.getHours().toString().padStart(2, '0');
+        const mm = d.getMinutes().toString().padStart(2, '0');
+        const ss = d.getSeconds().toString().padStart(2, '0');
+        const ms = d.getMilliseconds().toString().padStart(3, '0');
+        return `${hh}:${mm}:${ss}.${ms}`;
+    }
+
+    buildResultsFromReads(reads, maps, raceStartMs) {
+        const chipToBib = {};
+        maps.forEach(m => chipToBib[m.chip_hex] = m.bib_num);
+
+        const groups = {};
+        reads.forEach(r => {
+            if (!groups[r.tag_hex]) groups[r.tag_hex] = [];
+            groups[r.tag_hex].push(r);
+        });
+
+        const results = {};
+        Object.keys(groups).forEach(hex => {
+            const tagReads = groups[hex].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+            const firstRead = tagReads[0];
+            const windowLimitMs = new Date(firstRead.timestamp).getTime() + 10000;
+            let bestRead = firstRead;
+            for (const r of tagReads) {
+                if (new Date(r.timestamp).getTime() > windowLimitMs) break;
+                if (r.rssi > bestRead.rssi) bestRead = r;
+            }
+            const elapsedMs = new Date(bestRead.timestamp).getTime() - raceStartMs;
+            const epcBib = decodeBibFromEpc(hex);
+            const bib = epcBib !== null ? epcBib : chipToBib[hex];
+            if (bib === undefined) return;
+            results[hex] = {
+                bib,
+                elapsedMs,
+                elapsed: this._formatTime(elapsedMs),
+                wallClock: this._formatWallClock(bestRead.timestamp),
+            };
+        });
+        return results;
+    }
+
+    buildCsvString(results) {
+        let csv = 'Bib,Elapsed Time,Wall Clock,Chip\n';
+        Object.keys(results).forEach(hex => {
+            const r = results[hex];
+            csv += `"${r.bib}","${r.elapsed}","${r.wallClock}","${hex}"\n`;
+        });
+        return csv;
     }
 
     getAllFromStore(storeName) {

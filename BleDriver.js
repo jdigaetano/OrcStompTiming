@@ -150,7 +150,10 @@ class BleDriver {
             if (this.intentionalDisconnect || this.isAutoReconnecting) return;
             this._log('Heartbeat: ping');
             try {
-                await this.sendCommand('7CFFFF820000', 0x82, 2000);
+                // Probe the GATT write pipe with a single null byte — throws if the
+                // BLE link is dead even when gattserverdisconnected hasn't fired.
+                // The reader discards the byte (no valid SOI), no response expected.
+                await this.writeCharacteristic.writeValueWithoutResponse(new Uint8Array([0x00]));
                 this._log('Heartbeat: OK');
             } catch (e) {
                 if (!this.intentionalDisconnect && !this.isAutoReconnecting) {
@@ -352,9 +355,7 @@ class BleDriver {
         const verify = await this.scanForTag(2000, 400);
         if (verify) {
             const hex = verify.epcHex.toUpperCase();
-            const readBib = (hex.length >= 8 && hex.slice(0, 4) === '4F53')
-                ? parseInt(hex.slice(4, 8), 16)
-                : null;
+            const readBib = decodeBibFromEpc(hex);
             if (readBib === bibNum) {
                 return { success: true, message: `Bib ${bibNum} written and verified.` };
             }
@@ -370,6 +371,7 @@ class BleDriver {
     // restarts the scan loop. Writing WM=0x01 to flash breaks CtrlAutoRead(1) until
     // the next reboot. See PROTOCOL_SPEC.md §6.
     async setWorkMode(mode) {
+        if (mode !== 'command' && mode !== 'active') throw new Error(`Invalid mode "${mode}" — expected 'command' or 'active'`);
         await this.sendRawHex(mode === 'command' ? '7CFFFF34000100' : '7CFFFF34000101');
     }
 
@@ -379,6 +381,7 @@ class BleDriver {
     // onTagRead normally — they never satisfy this promise.
     sendCommand(hexString, expectedCid1, timeoutMs = 1000) {
         if (!this.writeCharacteristic) return Promise.reject(new Error('No write pipe available'));
+        if (this._pendingCommand) return Promise.reject(new Error('Command already in flight — only one sendCommand at a time'));
 
         return new Promise((resolve, reject) => {
             const timer = setTimeout(() => {
@@ -432,6 +435,8 @@ class BleDriver {
         localStorage.removeItem('bleDeviceName');
         if (this.device && this.device.gatt.connected) await this.device.gatt.disconnect();
         this.device = null;
+        this.writeCharacteristic = null;
+        this.notifyCharacteristic = null;
         this.updateStatus("READER OFFLINE", false);
     }
 

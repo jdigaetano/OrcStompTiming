@@ -33,6 +33,26 @@ describe('Mission Critical: Data Integrity & Recovery', () => {
             expect(newEngine.raceStartTime).toBe(fakeStartTime);
         });
 
+        it('restoreSession() restores isTrackingRace from localStorage so AppUI init failure cannot leave engine in tracking limbo', async () => {
+            global.localStorage.setItem('raceStartTime', '2026-06-23T10:00:00.000Z');
+            global.localStorage.setItem('isTrackingRace', 'true');
+
+            const newEngine = new TimingEngine();
+            await newEngine.ready;
+
+            expect(newEngine.isTrackingRace).toBe(true);
+        });
+
+        it('restoreSession() leaves isTrackingRace false when localStorage flag is absent', async () => {
+            global.localStorage.setItem('raceStartTime', '2026-06-23T10:00:00.000Z');
+            // isTrackingRace not set in localStorage
+
+            const newEngine = new TimingEngine();
+            await newEngine.ready;
+
+            expect(newEngine.isTrackingRace).toBe(false);
+        });
+
         it('should NOT allow recording if race is paused (even if start time exists)', async () => {
             engine.raceStartTime = new Date().toISOString();
             engine.isTrackingRace = false; // Paused
@@ -77,6 +97,14 @@ describe('Mission Critical: Data Integrity & Recovery', () => {
             expect(reads).toHaveLength(1);
             expect(reads[0].timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T/);
             expect(reads[0].elapsed_ms).toBeUndefined();
+        });
+    });
+
+    describe('Guard: clearRaceData() before db is ready', () => {
+        it('rejects with a clear error instead of a TypeError crash', async () => {
+            const bare = new TimingEngine();
+            bare.db = null; // simulate uninitialized or before initDB resolves
+            await expect(bare.clearRaceData()).rejects.toThrow(/database not initialized/i);
         });
     });
 

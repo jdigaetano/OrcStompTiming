@@ -10,9 +10,12 @@ const loadScript = (fileName) => {
 
 loadScript('BleDriver.js');
 const AppUI = loadScript('AppUI.js');
+const TimingEngine = loadScript('TimingEngine.js');
 
-// Bypass the constructor (requires engine+driver+DOM) — we only test pure methods
+// Bypass the constructors for pure method testing
 const ui = Object.create(AppUI.prototype);
+// Bare engine instance for testing engine-owned result methods
+const engineForExport = Object.create(TimingEngine.prototype);
 
 // ─── formatWallClock ────────────────────────────────────────────────────────
 
@@ -41,9 +44,9 @@ describe('AppUI.formatWallClock()', () => {
     });
 });
 
-// ─── buildResultsFromReads ──────────────────────────────────────────────────
+// ─── buildResultsFromReads (lives on TimingEngine, tested on engine instance) ─
 
-describe('AppUI.buildResultsFromReads()', () => {
+describe('TimingEngine.buildResultsFromReads() — full coverage', () => {
     const START = new Date('2026-06-30T10:00:00.000Z').getTime();
 
     function makeRead(tag, rssi, offsetMs) {
@@ -60,7 +63,7 @@ describe('AppUI.buildResultsFromReads()', () => {
             makeRead(OS1, -50, 3000),   // best RSSI, still in window
             makeRead(OS1, -60, 7000),
         ];
-        const results = ui.buildResultsFromReads(reads, [], START);
+        const results = engineForExport.buildResultsFromReads(reads, [], START);
         expect(results[OS1].elapsedMs).toBe(3000);
     });
 
@@ -69,38 +72,38 @@ describe('AppUI.buildResultsFromReads()', () => {
             makeRead(OS1, -70, 0),
             makeRead(OS1, -50, 11000),  // after window — should NOT become the best
         ];
-        const results = ui.buildResultsFromReads(reads, [], START);
+        const results = engineForExport.buildResultsFromReads(reads, [], START);
         expect(results[OS1].elapsedMs).toBe(0); // first read wins since -50 is excluded
     });
 
     it('computes elapsedMs correctly from the best read timestamp and raceStartMs', () => {
         const reads = [makeRead(OS1, -70, 5234)];
-        const results = ui.buildResultsFromReads(reads, [], START);
+        const results = engineForExport.buildResultsFromReads(reads, [], START);
         expect(results[OS1].elapsedMs).toBe(5234);
     });
 
-    it('formats elapsed as HH:MM:SS via formatTime', () => {
+    it('formats elapsed as HH:MM:SS via _formatTime', () => {
         const reads = [makeRead(OS1, -70, 75000)]; // 1m 15s
-        const results = ui.buildResultsFromReads(reads, [], START);
+        const results = engineForExport.buildResultsFromReads(reads, [], START);
         expect(results[OS1].elapsed).toBe('00:01:15');
     });
 
     it('includes a wallClock field in HH:MM:SS.mmm format', () => {
         const reads = [makeRead(OS1, -70, 0)];
-        const results = ui.buildResultsFromReads(reads, [], START);
+        const results = engineForExport.buildResultsFromReads(reads, [], START);
         expect(results[OS1].wallClock).toMatch(/^\d{2}:\d{2}:\d{2}\.\d{3}$/);
     });
 
     it('looks up bib from chip_map for non-OS-encoded chips', () => {
         const reads = [makeRead('AABBCCDD', -70, 1000)];
         const maps = [{ chip_hex: 'AABBCCDD', bib_num: 104 }];
-        const results = ui.buildResultsFromReads(reads, maps, START);
+        const results = engineForExport.buildResultsFromReads(reads, maps, START);
         expect(results['AABBCCDD'].bib).toBe(104);
     });
 
     it('excludes chips with no OS encoding and no chip_map entry — no UNKNOWN rows in results', () => {
         const reads = [makeRead('DEADBEEF', -70, 1000)];
-        const results = ui.buildResultsFromReads(reads, [], START);
+        const results = engineForExport.buildResultsFromReads(reads, [], START);
         expect(results['DEADBEEF']).toBeUndefined();
     });
 
@@ -109,7 +112,7 @@ describe('AppUI.buildResultsFromReads()', () => {
             makeRead(OS1, -70, 1000),
             makeRead(OS2, -60, 2000),
         ];
-        const results = ui.buildResultsFromReads(reads, [], START);
+        const results = engineForExport.buildResultsFromReads(reads, [], START);
         expect(Object.keys(results)).toHaveLength(2);
         expect(results[OS1].elapsedMs).toBe(1000);
         expect(results[OS2].elapsedMs).toBe(2000);
@@ -150,7 +153,7 @@ describe('AppUI.decodeBibFromEpc()', () => {
 
 // ─── buildResultsFromReads — EPC decode path ────────────────────────────────
 
-describe('AppUI.buildResultsFromReads() — EPC-encoded bib', () => {
+describe('TimingEngine.buildResultsFromReads() — EPC-encoded bib', () => {
     const START = new Date('2026-06-30T10:00:00.000Z').getTime();
 
     function makeRead(tag, rssi, offsetMs) {
@@ -161,7 +164,7 @@ describe('AppUI.buildResultsFromReads() — EPC-encoded bib', () => {
         const epc = '4F530068' + '00'.repeat(8); // bib 104
         const reads = [makeRead(epc, -60, 1000)];
         const maps = [{ chip_hex: epc, bib_num: 999 }]; // chip_map has wrong bib — should be ignored
-        const results = ui.buildResultsFromReads(reads, maps, START);
+        const results = engineForExport.buildResultsFromReads(reads, maps, START);
         expect(results[epc].bib).toBe(104);
     });
 
@@ -169,21 +172,21 @@ describe('AppUI.buildResultsFromReads() — EPC-encoded bib', () => {
         const epc = 'AABBCCDDEEFF001122334455';
         const reads = [makeRead(epc, -60, 1000)];
         const maps = [{ chip_hex: epc, bib_num: 42 }];
-        const results = ui.buildResultsFromReads(reads, maps, START);
+        const results = engineForExport.buildResultsFromReads(reads, maps, START);
         expect(results[epc].bib).toBe(42);
     });
 
     it('excludes chips with no OS encoding and no chip_map entry — no UNKNOWN rows in results', () => {
         const epc = 'AABBCCDDEEFF001122334455';
         const reads = [makeRead(epc, -60, 1000)];
-        const results = ui.buildResultsFromReads(reads, [], START);
+        const results = engineForExport.buildResultsFromReads(reads, [], START);
         expect(results[epc]).toBeUndefined();
     });
 
     it('includes OS-encoded chips even when they have no chip_map entry', () => {
         const epc = '4F530068' + '00'.repeat(8); // bib 104, no chip_map
         const reads = [makeRead(epc, -60, 1000)];
-        const results = ui.buildResultsFromReads(reads, [], START);
+        const results = engineForExport.buildResultsFromReads(reads, [], START);
         expect(results[epc]).toBeDefined();
         expect(results[epc].bib).toBe(104);
     });
@@ -191,26 +194,26 @@ describe('AppUI.buildResultsFromReads() — EPC-encoded bib', () => {
 
 // ─── buildCsvString ─────────────────────────────────────────────────────────
 
-describe('AppUI.buildCsvString()', () => {
+describe('TimingEngine.buildCsvString() — full coverage', () => {
     const sampleResults = {
         'AABBCCDD': { bib: 104, elapsed: '00:25:30', wallClock: '10:25:30.000' },
         'DEADBEEF': { bib: 'UNKNOWN', elapsed: '00:30:00', wallClock: '10:30:00.000' },
     };
 
     it('includes Bib, Elapsed Time, Wall Clock, and Chip headers', () => {
-        const csv = ui.buildCsvString(sampleResults);
+        const csv = engineForExport.buildCsvString(sampleResults);
         const header = csv.split('\n')[0];
         expect(header).toBe('Bib,Elapsed Time,Wall Clock,Chip');
     });
 
     it('includes one data row per chip', () => {
-        const csv = ui.buildCsvString(sampleResults);
+        const csv = engineForExport.buildCsvString(sampleResults);
         const dataRows = csv.trim().split('\n').slice(1);
         expect(dataRows).toHaveLength(2);
     });
 
     it('includes bib, elapsed, wall clock, and chip hex in each row', () => {
-        const csv = ui.buildCsvString({ 'AABBCCDD': { bib: 104, elapsed: '00:25:30', wallClock: '10:25:30.000' } });
+        const csv = engineForExport.buildCsvString({ 'AABBCCDD': { bib: 104, elapsed: '00:25:30', wallClock: '10:25:30.000' } });
         const row = csv.trim().split('\n')[1];
         expect(row).toContain('104');
         expect(row).toContain('00:25:30');
@@ -218,3 +221,4 @@ describe('AppUI.buildCsvString()', () => {
         expect(row).toContain('AABBCCDD');
     });
 });
+

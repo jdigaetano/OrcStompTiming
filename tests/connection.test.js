@@ -378,6 +378,15 @@ describe('BleDriver Connection Lifecycle', () => {
             await driver.disconnect();
             expect(driver.device).toBeNull();
         });
+
+        it('nulls writeCharacteristic and notifyCharacteristic so stale refs cannot write after disconnect', async () => {
+            driver.writeCharacteristic = { writeValueWithoutResponse: vi.fn() };
+            driver.notifyCharacteristic = { startNotifications: vi.fn() };
+            driver.device = { gatt: { connected: false, disconnect: vi.fn() } };
+            await driver.disconnect();
+            expect(driver.writeCharacteristic).toBeNull();
+            expect(driver.notifyCharacteristic).toBeNull();
+        });
     });
 
     describe('retryConnect()', () => {

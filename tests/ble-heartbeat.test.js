@@ -42,6 +42,9 @@ describe('BleDriver GATT ping heartbeat', () => {
         vi.useFakeTimers();
         global.localStorage.clear();
         driver = new BleDriver();
+        driver.writeCharacteristic = {
+            writeValueWithoutResponse: vi.fn().mockResolvedValue(undefined),
+        };
     });
 
     afterEach(() => {
@@ -52,21 +55,20 @@ describe('BleDriver GATT ping heartbeat', () => {
         expect(driver._heartbeatTimer).toBeNull();
     });
 
-    it('_startHeartbeat() fires sendCommand with Get Basic Info (CID1=0x82) on a 25-second interval', async () => {
-        const sendSpy = vi.spyOn(driver, 'sendCommand').mockResolvedValue(new Uint8Array([0xCC]));
+    it('_startHeartbeat() calls writeValueWithoutResponse with a null-byte probe on a 25-second interval', async () => {
+        const writeSpy = driver.writeCharacteristic.writeValueWithoutResponse;
         driver._startHeartbeat();
 
-        expect(sendSpy).not.toHaveBeenCalled();
+        expect(writeSpy).not.toHaveBeenCalled();
         await vi.advanceTimersByTimeAsync(25000);
-        expect(sendSpy).toHaveBeenCalledTimes(1);
-        expect(sendSpy).toHaveBeenCalledWith('7CFFFF820000', 0x82, 2000);
+        expect(writeSpy).toHaveBeenCalledTimes(1);
+        expect(writeSpy).toHaveBeenCalledWith(new Uint8Array([0x00]));
 
         await vi.advanceTimersByTimeAsync(25000);
-        expect(sendSpy).toHaveBeenCalledTimes(2);
+        expect(writeSpy).toHaveBeenCalledTimes(2);
     });
 
-    it('does NOT call handleDisconnect when the ping response arrives normally', async () => {
-        vi.spyOn(driver, 'sendCommand').mockResolvedValue(new Uint8Array([0xCC]));
+    it('does NOT call handleDisconnect when the probe write succeeds (link alive)', async () => {
         const disconnectSpy = vi.spyOn(driver, 'handleDisconnect');
         driver._startHeartbeat();
 
@@ -75,8 +77,8 @@ describe('BleDriver GATT ping heartbeat', () => {
         expect(disconnectSpy).not.toHaveBeenCalled();
     });
 
-    it('calls handleDisconnect when the ping times out (dead link detected)', async () => {
-        vi.spyOn(driver, 'sendCommand').mockRejectedValue(new Error('sendCommand timeout waiting for CID1=0x82'));
+    it('calls handleDisconnect when the probe write throws (dead link detected)', async () => {
+        driver.writeCharacteristic.writeValueWithoutResponse = vi.fn().mockRejectedValue(new Error('GATT server is disconnected'));
         const disconnectSpy = vi.spyOn(driver, 'handleDisconnect').mockImplementation(() => {});
         driver.intentionalDisconnect = false;
         driver.isAutoReconnecting = false;
@@ -87,8 +89,8 @@ describe('BleDriver GATT ping heartbeat', () => {
         expect(disconnectSpy).toHaveBeenCalledTimes(1);
     });
 
-    it('does NOT call handleDisconnect on ping timeout when intentionalDisconnect is true', async () => {
-        vi.spyOn(driver, 'sendCommand').mockRejectedValue(new Error('timeout'));
+    it('does NOT call handleDisconnect on probe failure when intentionalDisconnect is true', async () => {
+        driver.writeCharacteristic.writeValueWithoutResponse = vi.fn().mockRejectedValue(new Error('GATT disconnected'));
         const disconnectSpy = vi.spyOn(driver, 'handleDisconnect').mockImplementation(() => {});
         driver.intentionalDisconnect = true;
         driver.isAutoReconnecting = false;
@@ -99,8 +101,8 @@ describe('BleDriver GATT ping heartbeat', () => {
         expect(disconnectSpy).not.toHaveBeenCalled();
     });
 
-    it('does NOT call handleDisconnect on ping timeout when isAutoReconnecting is already true', async () => {
-        vi.spyOn(driver, 'sendCommand').mockRejectedValue(new Error('timeout'));
+    it('does NOT call handleDisconnect on probe failure when isAutoReconnecting is already true', async () => {
+        driver.writeCharacteristic.writeValueWithoutResponse = vi.fn().mockRejectedValue(new Error('GATT disconnected'));
         const disconnectSpy = vi.spyOn(driver, 'handleDisconnect').mockImplementation(() => {});
         driver.intentionalDisconnect = false;
         driver.isAutoReconnecting = true;
@@ -111,13 +113,13 @@ describe('BleDriver GATT ping heartbeat', () => {
         expect(disconnectSpy).not.toHaveBeenCalled();
     });
 
-    it('_stopHeartbeat() prevents any further pings from firing', async () => {
-        const sendSpy = vi.spyOn(driver, 'sendCommand').mockResolvedValue(new Uint8Array([0xCC]));
+    it('_stopHeartbeat() prevents any further probes from firing', async () => {
+        const writeSpy = driver.writeCharacteristic.writeValueWithoutResponse;
         driver._startHeartbeat();
         driver._stopHeartbeat();
 
         await vi.advanceTimersByTimeAsync(25000);
-        expect(sendSpy).not.toHaveBeenCalled();
+        expect(writeSpy).not.toHaveBeenCalled();
     });
 
     it('_stopHeartbeat() sets _heartbeatTimer back to null', () => {
@@ -128,12 +130,12 @@ describe('BleDriver GATT ping heartbeat', () => {
     });
 
     it('_startHeartbeat() cancels a previous interval so reconnects never double up the heartbeat', async () => {
-        const sendSpy = vi.spyOn(driver, 'sendCommand').mockResolvedValue(new Uint8Array([0xCC]));
+        const writeSpy = driver.writeCharacteristic.writeValueWithoutResponse;
         driver._startHeartbeat();
         driver._startHeartbeat(); // second call — should replace, not stack
 
         await vi.advanceTimersByTimeAsync(25000);
-        expect(sendSpy).toHaveBeenCalledTimes(1); // only one ping, not two
+        expect(writeSpy).toHaveBeenCalledTimes(1); // only one probe, not two
     });
 
     it('establishConnection() starts the heartbeat after reporting READER ONLINE', async () => {
@@ -167,8 +169,7 @@ describe('BleDriver GATT ping heartbeat', () => {
         expect(stopSpy).toHaveBeenCalledTimes(1);
     });
 
-    it('heartbeat logs a ping message when fired and an OK message when response arrives', async () => {
-        vi.spyOn(driver, 'sendCommand').mockResolvedValue(new Uint8Array([0xCC]));
+    it('heartbeat logs a ping message when fired and an OK message when probe succeeds', async () => {
         const logs = [];
         driver.onLog = (msg) => logs.push(msg);
         driver._startHeartbeat();
@@ -179,8 +180,8 @@ describe('BleDriver GATT ping heartbeat', () => {
         expect(logs.some(m => /ok/i.test(m))).toBe(true);
     });
 
-    it('heartbeat does not log an extra message on timeout — LINK LOST from handleDisconnect is enough', async () => {
-        vi.spyOn(driver, 'sendCommand').mockRejectedValue(new Error('timeout'));
+    it('heartbeat does not log an extra message on probe failure — LINK LOST from handleDisconnect is enough', async () => {
+        driver.writeCharacteristic.writeValueWithoutResponse = vi.fn().mockRejectedValue(new Error('GATT disconnected'));
         vi.spyOn(driver, 'handleDisconnect').mockImplementation(() => {});
         driver.intentionalDisconnect = false;
         driver.isAutoReconnecting = false;

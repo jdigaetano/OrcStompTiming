@@ -14,7 +14,7 @@
 
 ## 3. Hardware Management
 - **BleDriver**: Must implement an auto-reconnect loop. If the GATT server drops, it should attempt to reconnect silently without user intervention if the race is active.
-- **Mocking**: The interface must be abstract enough to allow a `MockBleDriver` to inject fake reads for testing/regression.
+- **Mocking**: Tests use inline mocks within each test file (`vi.fn()`, stub objects). `MockBleDriver.js` is not maintained — inline mocks are the standard approach.
 
 ## 4. Processing
 - **Deduplication**: Initial "Ingestion Dedup" (don't save the same chip 100 times in 1 second).
@@ -30,7 +30,11 @@
 - **Implementation/Junior Assistant**: The AI. Provides technical suggestions and handles code execution but must remain strictly disciplined.
 - **Operational Rule**: No "freestyling." The AI must not assume it knows better or change working code for the sake of "improvement" without a direct order. The Junior executes what the Senior approves.
 
-## 7. Testing Discipline (Red-Green-Refactor)
+## 7. Protocol Command Hygiene
+- **No raw hex command string may be written into production code or a test without first citing the PROTOCOL_SPEC.md section that defines it.** CID1 alone is not enough — CID2 must also be verified as a valid sub-command for that CID1. If the spec section cannot be cited, the command does not get written.
+- A test that asserts a hex string is consistent, not correct. Consistency tests pass even when the bytes are wrong. The spec citation is what makes correctness checkable.
+
+## 8. Testing Discipline (Red-Green-Refactor)
 - **Before any code change**: there must be a test exercising the affected behavior that currently fails (Red) for the reason the change is meant to fix. Write it first if one doesn't already exist.
 - **After any code change**: run the full test suite (`npm test`) and read the complete output — not just the test that motivated the change. Every newly-failing test must be triaged immediately into one of:
     1. **Stale test** — it modeled outdated/incorrect behavior; confirm against the real source of truth (`PROTOCOL_SPEC.md`, hardware behavior) before rewriting it, don't just patch it to pass.

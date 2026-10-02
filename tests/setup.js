@@ -1,5 +1,17 @@
 import { indexedDB, IDBKeyRange } from 'fake-indexeddb';
 import { beforeEach, vi } from 'vitest';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
+import { resolve, dirname } from 'path';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Load utils.js so decodeBibFromEpc is available globally in all tests that load
+// BleDriver.js or AppUI.js, which reference it as a free variable (loaded first in
+// index.html via <script src="utils.js">, so tests must mirror that load order).
+const _utilsCode = readFileSync(resolve(__dirname, '../utils.js'), 'utf8');
+new Function('global', _utilsCode)(global);
 
 // Inject fake IndexedDB into the global scope
 global.indexedDB = indexedDB;

@@ -101,6 +101,54 @@ describe('BleDriver.sendCommand()', () => {
         const frame = await promise;
         expect(frame[3]).toBe(0x20);
     });
+
+    it('rejects immediately if another command is already in flight (_pendingCommand guard)', async () => {
+        // Hold a first command open by never firing a response
+        driver.sendCommand('7CFFFF813200', 0x81, 5000); // first command, never resolved
+        // Second call while the first is pending should reject right away
+        await expect(driver.sendCommand('7CFFFF820000', 0x82, 1000)).rejects.toThrow(/command already in flight/i);
+    });
+});
+
+describe('BleDriver.sendRawHex()', () => {
+    let BleDriver, driver;
+
+    beforeEach(() => {
+        global.localStorage.clear();
+        BleDriver = loadScript('BleDriver.js');
+        driver = new BleDriver();
+        driver.writeCharacteristic = {
+            writeValueWithoutResponse: vi.fn().mockResolvedValue(undefined),
+        };
+    });
+
+    it('throws when writeCharacteristic is null', async () => {
+        driver.writeCharacteristic = null;
+        await expect(driver.sendRawHex('7CFFFF813200')).rejects.toThrow(/write pipe/i);
+    });
+
+    it('auto-appends Two\'s Complement checksum when the frame is missing it', async () => {
+        // 7C FF FF 81 32 00 — len=0, so full frame is 6 bytes; checksum missing
+        // sum = 0x7C+0xFF+0xFF+0x81+0x32+0x00 = 0x32D; twos = (0x100 - 0x2D) = 0xD3
+        await driver.sendRawHex('7CFFFF813200');
+        const written = driver.writeCharacteristic.writeValueWithoutResponse.mock.calls[0][0];
+        expect(written[written.length - 1]).toBe(0xD3);
+        expect(written.length).toBe(7);
+    });
+
+    it('passes through a frame that already includes the checksum byte unchanged', async () => {
+        // Full already-checksummed frame (7 bytes)
+        await driver.sendRawHex('7CFFFF813200D3');
+        const written = driver.writeCharacteristic.writeValueWithoutResponse.mock.calls[0][0];
+        expect(written.length).toBe(7);
+        expect(written[6]).toBe(0xD3);
+    });
+
+    it('calls writeValueWithoutResponse with a Uint8Array', async () => {
+        await driver.sendRawHex('7CFFFF813200');
+        const written = driver.writeCharacteristic.writeValueWithoutResponse.mock.calls[0][0];
+        expect(written).toBeInstanceOf(Uint8Array);
+    });
 });
 
 describe('BleDriver.sendRawHex()', () => {

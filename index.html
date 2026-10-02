@@ -73,7 +73,7 @@
         <div>
             <button id="chooseBackupBtn" class="btn" style="padding: 4px 8px; font-size: 10px; border-color: #555; color: #555;" onclick="app.chooseBackupLocation()">CHOOSE BACKUP LOCATION</button>
             <span id="backupLocationLabel" style="color: var(--text-dim); font-size: 10px; margin-left: 8px;">No backup location set</span>
-<span style="color: var(--text-dim); font-size: 10px; margin-left: 10px;">v1.4.3</span>
+<span style="color: var(--text-dim); font-size: 10px; margin-left: 10px;">v1.4.4</span>
         </div>
     </div>
 
@@ -237,6 +237,7 @@
     </div>
 
     <!-- Architectural Scripts -->
+    <script src="utils.js"></script>
     <script src="BleDriver.js"></script>
 <script src="TimingEngine.js"></script>
     <script src="AppUI.js"></script>
@@ -324,6 +325,7 @@
             a.setAttribute('href', url);
             a.setAttribute('download', `chip-map-export.csv`);
             a.click();
+            URL.revokeObjectURL(url);
         };
 
         app.importChipMap = async (event) => {
@@ -346,8 +348,8 @@
             const lines = text.split('\n').filter(l => l.trim() !== '');
             if (lines.length < 2) return alert("File is empty or missing data.");
             const headers = lines[0].split(',').map(h => h.trim().toUpperCase());
-            const chipColIndex = headers.indexOf("CHIP");
-            if (chipColIndex === -1) return alert("Invalid CSV: Could not find a 'Chip' column header.");
+            const chipColIndex = headers.findIndex(h => h === 'CHIP' || h === 'CHIPHEX');
+            if (chipColIndex === -1) return alert("Invalid CSV: Could not find a 'Chip' or 'ChipHex' column header.");
             const chipsToRemove = new Set();
             for (let i = 1; i < lines.length; i++) {
                 const parts = lines[i].split(',');
@@ -358,9 +360,7 @@
             }
             if (chipsToRemove.size === 0) return alert("No chip data found in file.");
             if (confirm(`Remove ${chipsToRemove.size} used chips from the active registry?`)) {
-                for (let hex of chipsToRemove) {
-                    await app.deleteMapping(hex);
-                }
+                await Promise.all([...chipsToRemove].map(hex => app.deleteMapping(hex)));
                 alert("Reconciliation complete.");
                 app.renderMappingTable();
             }
@@ -374,7 +374,8 @@
         };
 
         if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('./service-worker.js');
+            navigator.serviceWorker.register('./service-worker.js')
+                .catch(e => console.warn('SW registration failed:', e));
         }
     </script>
 </body>

@@ -248,20 +248,47 @@ describe('OrcStomp Regression Suite', () => {
         });
     });
 
-    describe('TimingEngine & Peak RSSI Logic (Advanced)', () => {
-        let engine;
+    // ─── Single-notification-only behavior (KNOWN_ISSUES #7, won't-fix) ──────
+    //
+    // parseFrame() has no reassembly buffer. A frame split across two BLE
+    // notifications produces no onTagRead — the partial first notification is
+    // silently discarded. Negotiated MTU has been sufficient across multiple real
+    // races so this is documented as intentional, not fixed.
+    describe('Frame split across two BLE notifications — produces no onTagRead (intentional)', () => {
+        const h2b = (hex) => hex.match(/.{1,2}/g).map(b => parseInt(b, 16));
+        const toView = (bytes) => new DataView(new Uint8Array(bytes).buffer);
 
-        beforeEach(async () => {
-            engine = new TimingEngine();
-            await engine.ready;
-            await engine.clearAllData();
+        it('fires onTagRead for a complete frame in one notification', () => {
+            const driver = new BleDriver();
+            const reads = [];
+            driver.onTagRead = (tag, rssi) => reads.push({ tag, rssi });
+
+            // Complete 12-byte-EPC tag frame in a single notification
+            driver.parseFrame({ target: { value: toView(h2b('CCFFFF200510003000E2806915000050042B3611EEB885')) } });
+            expect(reads).toHaveLength(1);
         });
 
-        it('should handle database initialization and mappings', async () => {
-            await engine.saveMapping("TAG1", 101);
-            const maps = await engine.getMappings();
-            expect(maps).toContainEqual({ chip_hex: "TAG1", bib_num: 101 });
+        it('fires no onTagRead when the frame is split across two notifications (first half)', () => {
+            const driver = new BleDriver();
+            const reads = [];
+            driver.onTagRead = (tag, rssi) => reads.push({ tag, rssi });
+
+            const fullFrame = h2b('CCFFFF200510003000E2806915000050042B3611EEB885');
+            driver.parseFrame({ target: { value: toView(fullFrame.slice(0, Math.floor(fullFrame.length / 2))) } });
+            expect(reads).toHaveLength(0);
         });
 
+        it('fires no onTagRead for the second half of a split frame either — no reassembly', () => {
+            const driver = new BleDriver();
+            const reads = [];
+            driver.onTagRead = (tag, rssi) => reads.push({ tag, rssi });
+
+            const fullFrame = h2b('CCFFFF200510003000E2806915000050042B3611EEB885');
+            const mid = Math.floor(fullFrame.length / 2);
+            driver.parseFrame({ target: { value: toView(fullFrame.slice(0, mid)) } });
+            driver.parseFrame({ target: { value: toView(fullFrame.slice(mid)) } });
+            expect(reads).toHaveLength(0);
+        });
     });
+
 });

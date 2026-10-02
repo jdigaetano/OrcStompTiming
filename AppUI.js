@@ -48,10 +48,6 @@ class AppUI {
             this.sysLog(msg);
         };
 
-        // Web Bluetooth events fire regardless of tab visibility, so no tag reads are lost.
-        this._visibilityHandler = () => this.handleVisibilityChange();
-        document.addEventListener('visibilitychange', this._visibilityHandler);
-
         // Link Engine to UI
         this.engine.onRecordPersisted = (record) => {
             this.totalReads++;
@@ -75,9 +71,7 @@ class AppUI {
             this.sysLog(`Recovered race: ${new Date(this.engine.raceStartTime).toLocaleTimeString()}`);
             this.startVisualClock();
 
-            const wasTracking = localStorage.getItem('isTrackingRace') === 'true';
-            if (wasTracking) {
-                this.engine.isTrackingRace = true;
+            if (this.engine.isTrackingRace) {
                 this.updateRaceStatus(true);
                 this.startBackupTimer();
             }
@@ -519,14 +513,6 @@ class AppUI {
         }
     }
 
-    handleVisibilityChange() {
-        if (document.hidden) {
-            this.sysLog('Tab hidden — BLE reads continue, display throttled by browser.');
-        } else {
-            this.sysLog('Tab visible — display restored.');
-        }
-    }
-
     formatWallClock(isoString) {
         const d = new Date(isoString);
         const hh = d.getHours().toString().padStart(2, '0');
@@ -536,56 +522,9 @@ class AppUI {
         return `${hh}:${mm}:${ss}.${ms}`;
     }
 
-    // Returns the bib number encoded in an EPC hex string, or null if not present.
-    // Encoding: first 4 hex chars must be "4F53" (magic), next 4 hex chars are bib as 16-bit big-endian.
-    decodeBibFromEpc(epcHex) {
-        if (!epcHex || epcHex.length < 8) return null;
-        if (epcHex.toUpperCase().slice(0, 4) !== '4F53') return null;
-        return parseInt(epcHex.slice(4, 8), 16);
-    }
-
-    buildResultsFromReads(reads, maps, raceStartMs) {
-        const chipToBib = {};
-        maps.forEach(m => chipToBib[m.chip_hex] = m.bib_num);
-
-        const groups = {};
-        reads.forEach(r => {
-            if (!groups[r.tag_hex]) groups[r.tag_hex] = [];
-            groups[r.tag_hex].push(r);
-        });
-
-        const results = {};
-        Object.keys(groups).forEach(hex => {
-            const tagReads = groups[hex].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-            const firstRead = tagReads[0];
-            const windowLimitMs = new Date(firstRead.timestamp).getTime() + 10000;
-            let bestRead = firstRead;
-            for (const r of tagReads) {
-                if (new Date(r.timestamp).getTime() > windowLimitMs) break;
-                if (r.rssi > bestRead.rssi) bestRead = r;
-            }
-            const elapsedMs = new Date(bestRead.timestamp).getTime() - raceStartMs;
-            const epcBib = this.decodeBibFromEpc(hex);
-            const bib = epcBib !== null ? epcBib : chipToBib[hex];
-            if (bib === undefined) return; // no OS encoding and no chip_map entry — skip noise
-            results[hex] = {
-                bib,
-                elapsedMs,
-                elapsed: this.formatTime(elapsedMs),
-                wallClock: this.formatWallClock(bestRead.timestamp),
-            };
-        });
-        return results;
-    }
-
-    buildCsvString(results) {
-        let csv = 'Bib,Elapsed Time,Wall Clock,Chip\n';
-        Object.keys(results).forEach(hex => {
-            const r = results[hex];
-            csv += `"${r.bib}","${r.elapsed}","${r.wallClock}","${hex}"\n`;
-        });
-        return csv;
-    }
+    // Thin wrapper so existing callers using this.decodeBibFromEpc() keep working.
+    // The implementation lives in utils.js (loaded before AppUI).
+    decodeBibFromEpc(epcHex) { return decodeBibFromEpc(epcHex); }
 
     // Computes and downloads the standings CSV (same logic previously inline as
     // index.html's app.exportCsv). Returns false without downloading anything if
@@ -596,8 +535,8 @@ class AppUI {
         if (!reads.length) return false;
         const maps = await this.engine.getAllFromStore('chip_map');
         const startMs = new Date(this.engine.raceStartTime).getTime();
-        const results = this.buildResultsFromReads(reads, maps, startMs);
-        const csv = this.buildCsvString(results);
+        const results = this.engine.buildResultsFromReads(reads, maps, startMs);
+        const csv = this.engine.buildCsvString(results);
         const blob = new Blob([csv], { type: 'text/csv' });
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');

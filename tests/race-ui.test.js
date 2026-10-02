@@ -97,3 +97,98 @@ describe('AppUI: Ping Counter and Unique Reads Counter', () => {
         expect(document.getElementById('uniqueCounter').textContent).toBe('2');
     });
 });
+
+// ─── AppUI.toggleRace() ──────────────────────────────────────────────────────
+
+describe('AppUI.toggleRace()', () => {
+    let ui, engine;
+
+    function makeStubEngine(overrides = {}) {
+        return {
+            ready: Promise.resolve(),
+            onRecordPersisted: null,
+            raceStartTime: null,
+            isTrackingRace: false,
+            getMappings: () => Promise.resolve([]),
+            getRawSnapshot: () => Promise.resolve({ raceStartTime: null, race_reads: [], chip_map: [] }),
+            getAllFromStore: () => Promise.resolve([]),
+            buildResultsFromReads: () => ({}),
+            buildCsvString: () => 'Bib,Elapsed Time,Wall Clock,Chip\n',
+            ...overrides,
+        };
+    }
+
+    beforeEach(() => {
+        global.localStorage.clear();
+        const html = require('fs').readFileSync(require('path').resolve(__dirname, '../index.html'), 'utf8');
+        const body = html.match(/<body>([\s\S]*)<\/body>/)[1].replace(/<script[\s\S]*?<\/script>/g, '');
+        document.body.innerHTML = body;
+
+        loadScript('BleDriver.js');
+        const AppUI = loadScript('AppUI.js');
+        engine = makeStubEngine();
+
+        ui = Object.create(AppUI.prototype);
+        ui.engine = engine;
+        ui.driver = { onTagRead: null, onStatusChange: null, onRawFrame: null };
+        ui.clockInterval = null;
+        ui.backupInterval = null;
+        ui.totalReads = 0;
+        ui.uniqueTags = new Set();
+        ui.backupHandle = null;
+    });
+
+    afterEach(() => {
+        if (ui.clockInterval) clearInterval(ui.clockInterval);
+        if (ui.backupInterval) clearInterval(ui.backupInterval);
+        global.localStorage.clear();
+    });
+
+    it('sets engine.isTrackingRace to true when starting', async () => {
+        await ui.toggleRace();
+        expect(engine.isTrackingRace).toBe(true);
+    });
+
+    it('persists isTrackingRace=true to localStorage when starting', async () => {
+        await ui.toggleRace();
+        expect(global.localStorage.getItem('isTrackingRace')).toBe('true');
+    });
+
+    it('sets raceStartTime on engine and in localStorage when no prior race', async () => {
+        await ui.toggleRace();
+        expect(engine.raceStartTime).not.toBeNull();
+        expect(global.localStorage.getItem('raceStartTime')).toBe(engine.raceStartTime);
+    });
+
+    it('does NOT overwrite an existing raceStartTime (resumed race keeps original start)', async () => {
+        engine.raceStartTime = '2026-06-30T10:00:00.000Z';
+        await ui.toggleRace();
+        expect(engine.raceStartTime).toBe('2026-06-30T10:00:00.000Z');
+    });
+
+    it('updates the raceStatus label to CLOCK RUNNING when starting', async () => {
+        await ui.toggleRace();
+        expect(document.getElementById('raceStatus').textContent).toBe('CLOCK RUNNING');
+    });
+
+    it('sets engine.isTrackingRace to false when stopping', async () => {
+        engine.isTrackingRace = true;
+        engine.raceStartTime = new Date().toISOString();
+        await ui.toggleRace();
+        expect(engine.isTrackingRace).toBe(false);
+    });
+
+    it('persists isTrackingRace=false to localStorage when stopping', async () => {
+        engine.isTrackingRace = true;
+        engine.raceStartTime = new Date().toISOString();
+        await ui.toggleRace();
+        expect(global.localStorage.getItem('isTrackingRace')).toBe('false');
+    });
+
+    it('updates the raceStatus label to CLOCK STOPPED when stopping', async () => {
+        engine.isTrackingRace = true;
+        engine.raceStartTime = new Date().toISOString();
+        await ui.toggleRace();
+        expect(document.getElementById('raceStatus').textContent).toBe('CLOCK STOPPED');
+    });
+});
