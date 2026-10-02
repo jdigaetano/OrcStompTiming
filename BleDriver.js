@@ -16,6 +16,8 @@ class BleDriver {
         this.isAutoReconnecting = false;
         this.intentionalDisconnect = false;
         this._pendingCommand = null; // set by sendCommand(), cleared when response arrives or times out
+        this._heartbeatTimer = null;
+        this.onLog = null;
     }
 
     async connect() {
@@ -130,6 +132,7 @@ class BleDriver {
 
             this.updateStatus("READER ONLINE", true);
             this.isAutoReconnecting = false;
+            this._startHeartbeat();
             return true;
         } catch (error) {
             this.updateStatus(`Connection Error: ${error.message}`, false);
@@ -137,8 +140,37 @@ class BleDriver {
         }
     }
 
+    _log(msg) {
+        if (this.onLog) this.onLog(msg);
+    }
+
+    _startHeartbeat() {
+        this._stopHeartbeat();
+        this._heartbeatTimer = setInterval(async () => {
+            if (this.intentionalDisconnect || this.isAutoReconnecting) return;
+            this._log('Heartbeat: ping');
+            try {
+                await this.sendCommand('7CFFFF820000', 0x82, 2000);
+                this._log('Heartbeat: OK');
+            } catch (e) {
+                if (!this.intentionalDisconnect && !this.isAutoReconnecting) {
+                    this.handleDisconnect();
+                }
+            }
+        }, 25000);
+    }
+
+    _stopHeartbeat() {
+        if (this._heartbeatTimer) {
+            clearInterval(this._heartbeatTimer);
+            this._heartbeatTimer = null;
+        }
+    }
+
     handleDisconnect() {
         if (this.intentionalDisconnect) return;
+        if (this.isAutoReconnecting) return;
+        this._stopHeartbeat();
         this.updateStatus("LINK LOST - RECONNECTING...", false);
         this.isAutoReconnecting = true;
         this.server = null;
@@ -395,6 +427,7 @@ class BleDriver {
     async disconnect() {
         this.intentionalDisconnect = true;
         this.isAutoReconnecting = false;
+        this._stopHeartbeat();
         localStorage.removeItem('bleDeviceId');
         localStorage.removeItem('bleDeviceName');
         if (this.device && this.device.gatt.connected) await this.device.gatt.disconnect();

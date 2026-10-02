@@ -44,6 +44,10 @@ class AppUI {
             this.updateInspector(payload);
         };
 
+        this.driver.onLog = (msg) => {
+            this.sysLog(msg);
+        };
+
         // Web Bluetooth events fire regardless of tab visibility, so no tag reads are lost.
         this._visibilityHandler = () => this.handleVisibilityChange();
         document.addEventListener('visibilitychange', this._visibilityHandler);
