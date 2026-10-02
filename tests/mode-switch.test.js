@@ -28,15 +28,17 @@ describe('BleDriver: Reader Parameter mode switching', () => {
         // loop instantly and safely. See PROTOCOL_SPEC.md §6 and KNOWN_ISSUES #1.
 
         it("sends CtrlAutoRead(status=0) for 'command' mode to pause the scan loop", async () => {
-            const rawHexSpy = vi.spyOn(driver, 'sendRawHex').mockResolvedValue();
+            // §6.4 CtrlAutoRead: CID1=34 CID2=00 LEN=01 INFO=00 (stop). Response CID1=0x34.
+            const cmdSpy = vi.spyOn(driver, 'sendCommand').mockResolvedValue(new Uint8Array());
             await driver.setWorkMode('command');
-            expect(rawHexSpy).toHaveBeenCalledWith('7CFFFF34000100');
+            expect(cmdSpy).toHaveBeenCalledWith('7CFFFF34000100', 0x34, 3000);
         });
 
         it("sends CtrlAutoRead(status=1) for 'active' mode to resume the scan loop", async () => {
-            const rawHexSpy = vi.spyOn(driver, 'sendRawHex').mockResolvedValue();
+            // §6.4 CtrlAutoRead: CID1=34 CID2=00 LEN=01 INFO=01 (start). Response CID1=0x34.
+            const cmdSpy = vi.spyOn(driver, 'sendCommand').mockResolvedValue(new Uint8Array());
             await driver.setWorkMode('active');
-            expect(rawHexSpy).toHaveBeenCalledWith('7CFFFF34000101');
+            expect(cmdSpy).toHaveBeenCalledWith('7CFFFF34000101', 0x34, 3000);
         });
 
         it("throws for an unrecognised mode string to prevent silent scan-mode activation on typos", async () => {

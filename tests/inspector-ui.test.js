@@ -200,3 +200,60 @@ describe('AppUI.updateInspector()', () => {
         }).not.toThrow();
     });
 });
+
+// ─── AppUI.bibProgLog() ──────────────────────────────────────────────────────
+
+describe('AppUI.bibProgLog()', () => {
+    let ui;
+
+    beforeEach(() => {
+        global.localStorage.clear();
+        loadScript('BleDriver.js');
+        const AppUI = loadScript('AppUI.js');
+        ui = Object.create(AppUI.prototype);
+
+        const html = fs.readFileSync(path.resolve(__dirname, '../index.html'), 'utf8');
+        const body = html.match(/<body>([\s\S]*)<\/body>/)[1].replace(/<script[\s\S]*?<\/script>/g, '');
+        document.body.innerHTML = body;
+    });
+
+    it('appends a timestamped entry to #bibProgLog', () => {
+        ui.bibProgLog('Test entry');
+        const el = document.getElementById('bibProgLog');
+        expect(el.innerHTML).toContain('Test entry');
+    });
+
+    it('clears the "No activity yet." placeholder on first call', () => {
+        document.getElementById('bibProgLog').innerHTML = '<span style="color: #555;">No activity yet.</span>';
+        ui.bibProgLog('First entry');
+        expect(document.getElementById('bibProgLog').innerHTML).not.toContain('No activity yet');
+    });
+
+    it('colors the entry with var(--error) when isError is true', () => {
+        ui.bibProgLog('Something went wrong', true);
+        expect(document.getElementById('bibProgLog').innerHTML).toContain('var(--error)');
+    });
+
+    it('colors the entry with var(--data) for a normal entry', () => {
+        ui.bibProgLog('All good');
+        expect(document.getElementById('bibProgLog').innerHTML).toContain('var(--data)');
+    });
+
+    it('prepends new entries so newest appears first', () => {
+        ui.bibProgLog('First');
+        ui.bibProgLog('Second');
+        const html = document.getElementById('bibProgLog').innerHTML;
+        expect(html.indexOf('Second')).toBeLessThan(html.indexOf('First'));
+    });
+
+    it('removes entries beyond 30 to prevent unbounded growth', () => {
+        for (let i = 0; i < 35; i++) ui.bibProgLog(`Entry ${i}`);
+        const entries = document.getElementById('bibProgLog').querySelectorAll('div');
+        expect(entries.length).toBeLessThanOrEqual(30);
+    });
+
+    it('does nothing when #bibProgLog element is absent', () => {
+        document.getElementById('bibProgLog').remove();
+        expect(() => ui.bibProgLog('Should not throw')).not.toThrow();
+    });
+});

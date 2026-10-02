@@ -372,7 +372,12 @@ class BleDriver {
     // the next reboot. See PROTOCOL_SPEC.md §6.
     async setWorkMode(mode) {
         if (mode !== 'command' && mode !== 'active') throw new Error(`Invalid mode "${mode}" — expected 'command' or 'active'`);
-        await this.sendRawHex(mode === 'command' ? '7CFFFF34000100' : '7CFFFF34000101');
+        // §6.4 CtrlAutoRead: CID1=34 CID2=00 LEN=01 INFO=00/01 [CHKSUM]. Response CID1=0x34, RTN=00.
+        await this.sendCommand(
+            mode === 'command' ? '7CFFFF34000100' : '7CFFFF34000101',
+            0x34,
+            3000
+        );
     }
 
     // Sends a command and returns a Promise that resolves with the raw response frame

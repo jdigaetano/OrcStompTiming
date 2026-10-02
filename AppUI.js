@@ -394,6 +394,16 @@ class AppUI {
         log.scrollTop = log.scrollHeight;
     }
 
+    bibProgLog(msg, isError = false) {
+        const el = document.getElementById('bibProgLog');
+        if (!el) return;
+        if (el.innerHTML.includes('No activity yet')) el.innerHTML = '';
+        const color = isError ? 'var(--error)' : 'var(--data)';
+        el.innerHTML = `<div style="color:${color}">[${new Date().toLocaleTimeString()}] ${msg}</div>` + el.innerHTML;
+        const entries = el.querySelectorAll('div');
+        if (entries.length > 30) entries[entries.length - 1].remove();
+    }
+
     updateInspector({ hex, checksumValid, tagDecode }) {
         const detail = document.getElementById('inspectorDetail');
         const history = document.getElementById('inspectorHistoryBody');
@@ -466,9 +476,11 @@ class AppUI {
     }
 
     async setBibProgrammingMode(active) {
+        this.bibProgLog(active ? 'Starting session — sending CtrlAutoRead(0)...' : 'Ending session — sending CtrlAutoRead(1)...');
         try {
             await this.driver.setWorkMode(active ? 'command' : 'active');
         } catch (e) {
+            this.bibProgLog(`MODE ERROR: ${e.message}`, true);
             this.sysLog(`MODE ERROR: ${e.message}`, true);
             return;
         }
@@ -476,21 +488,20 @@ class AppUI {
         if (section) section.style.display = active ? '' : 'none';
         const startBtn = document.getElementById('startBibProgBtn');
         if (startBtn) startBtn.textContent = active ? 'End Programming Session' : 'Start Programming Session';
-        this.sysLog(`SYSTEM: Bib programming ${active ? 'started — reader is quiet' : 'ended — reader back to active scanning'}.`);
+        this.bibProgLog(active ? 'Reader is quiet — ready to program.' : 'Reader resumed active scanning.');
+        this.sysLog(`SYSTEM: Bib programming ${active ? 'started' : 'ended'}.`);
     }
 
     async writeBibToScannedTag() {
         const bibInput = document.getElementById('bibProgBibNum');
-        const statusEl = document.getElementById('bibProgStatus');
         const bibNum = parseInt(bibInput?.value, 10);
         if (!bibInput || isNaN(bibNum) || bibNum < 1) {
-            if (statusEl) statusEl.textContent = 'Enter a valid bib number first.';
+            this.bibProgLog('Enter a valid bib number first.', true);
             return;
         }
-        if (statusEl) statusEl.textContent = 'Place chip near reader… (up to 5s)';
-        // Reader stays in command mode. writeBibToEpc polls for a chip, then writes.
+        this.bibProgLog(`Writing Bib ${bibNum}... (scanning up to 5s)`);
         const result = await this.driver.writeBibToEpc(bibNum);
-        if (statusEl) statusEl.textContent = result.success ? `✓ ${result.message}` : `✗ ${result.message}`;
+        this.bibProgLog(result.success ? `✓ ${result.message}` : `✗ ${result.message}`, !result.success);
         if (result.success) {
             this.sysLog(`BIB PROG: Bib ${bibNum} written and verified.`);
             if (bibInput) bibInput.value = bibNum + 1;
@@ -498,19 +509,17 @@ class AppUI {
     }
 
     async verifyBibChip() {
-        const statusEl = document.getElementById('bibProgStatus');
-        if (statusEl) statusEl.textContent = 'Scanning… wave chip near reader (up to 5s)';
+        this.bibProgLog('Scanning chip... (up to 5s)');
         const result = await this.driver.scanForTag(5000);
         if (!result) {
-            if (statusEl) statusEl.textContent = 'No chip detected.';
+            this.bibProgLog('No chip detected.');
             return;
         }
         const bib = this.decodeBibFromEpc(result.epcHex);
-        if (bib !== null) {
-            if (statusEl) statusEl.textContent = `BIB: ${bib} (OrcStomp encoded, ${result.rssiDbm} dBm)`;
-        } else {
-            if (statusEl) statusEl.textContent = `Not programmed — EPC: ${result.epcHex}`;
-        }
+        this.bibProgLog(bib !== null
+            ? `BIB: ${bib} (OrcStomp encoded, ${result.rssiDbm} dBm)`
+            : `Not programmed — EPC: ${result.epcHex}`
+        );
     }
 
     formatWallClock(isoString) {
