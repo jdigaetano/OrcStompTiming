@@ -38,5 +38,10 @@ describe('BleDriver: Reader Parameter mode switching', () => {
             await driver.setWorkMode('active');
             expect(rawHexSpy).toHaveBeenCalledWith('7CFFFF34000101');
         });
+
+        it("throws for an unrecognised mode string to prevent silent scan-mode activation on typos", async () => {
+            await expect(driver.setWorkMode('scanning')).rejects.toThrow(/invalid mode/i);
+            await expect(driver.setWorkMode('')).rejects.toThrow(/invalid mode/i);
+        });
     });
 });

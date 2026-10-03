@@ -84,6 +84,8 @@ function makeStubEngine(overrides = {}) {
         getRawSnapshot: vi.fn().mockResolvedValue({ raceStartTime: null, race_reads: [], chip_map: [] }),
         getBackupHandle: vi.fn().mockResolvedValue(null),
         saveBackupHandle: vi.fn().mockResolvedValue(undefined),
+        buildResultsFromReads: vi.fn().mockReturnValue({}),
+        buildCsvString: vi.fn().mockReturnValue('Bib,Elapsed Time,Wall Clock,Chip\n'),
         ...overrides,
     };
 }
@@ -141,7 +143,7 @@ describe('AppUI.performLiveBackup()', () => {
 describe('AppUI.downloadStandingsCsv()', () => {
     it('returns false and does not build a CSV when there are no race reads', async () => {
         const ui = makeUi({ getAllFromStore: vi.fn().mockResolvedValue([]) });
-        const spy = vi.spyOn(ui, 'buildCsvString');
+        const spy = vi.spyOn(ui.engine, 'buildCsvString');
         const result = await ui.downloadStandingsCsv();
         expect(result).toBe(false);
         expect(spy).not.toHaveBeenCalled();

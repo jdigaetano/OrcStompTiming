@@ -16,6 +16,8 @@ class BleDriver {
         this.isAutoReconnecting = false;
         this.intentionalDisconnect = false;
         this._pendingCommand = null; // set by sendCommand(), cleared when response arrives or times out
+        this._heartbeatTimer = null;
+        this.onLog = null;
     }
 
     async connect() {
@@ -130,6 +132,7 @@ class BleDriver {
 
             this.updateStatus("READER ONLINE", true);
             this.isAutoReconnecting = false;
+            this._startHeartbeat();
             return true;
         } catch (error) {
             this.updateStatus(`Connection Error: ${error.message}`, false);
@@ -137,8 +140,40 @@ class BleDriver {
         }
     }
 
+    _log(msg) {
+        if (this.onLog) this.onLog(msg);
+    }
+
+    _startHeartbeat() {
+        this._stopHeartbeat();
+        this._heartbeatTimer = setInterval(async () => {
+            if (this.intentionalDisconnect || this.isAutoReconnecting) return;
+            this._log('Heartbeat: ping');
+            try {
+                // Probe the GATT write pipe with a single null byte — throws if the
+                // BLE link is dead even when gattserverdisconnected hasn't fired.
+                // The reader discards the byte (no valid SOI), no response expected.
+                await this.writeCharacteristic.writeValueWithoutResponse(new Uint8Array([0x00]));
+                this._log('Heartbeat: OK');
+            } catch (e) {
+                if (!this.intentionalDisconnect && !this.isAutoReconnecting) {
+                    this.handleDisconnect();
+                }
+            }
+        }, 25000);
+    }
+
+    _stopHeartbeat() {
+        if (this._heartbeatTimer) {
+            clearInterval(this._heartbeatTimer);
+            this._heartbeatTimer = null;
+        }
+    }
+
     handleDisconnect() {
         if (this.intentionalDisconnect) return;
+        if (this.isAutoReconnecting) return;
+        this._stopHeartbeat();
         this.updateStatus("LINK LOST - RECONNECTING...", false);
         this.isAutoReconnecting = true;
         this.server = null;
@@ -320,9 +355,7 @@ class BleDriver {
         const verify = await this.scanForTag(2000, 400);
         if (verify) {
             const hex = verify.epcHex.toUpperCase();
-            const readBib = (hex.length >= 8 && hex.slice(0, 4) === '4F53')
-                ? parseInt(hex.slice(4, 8), 16)
-                : null;
+            const readBib = decodeBibFromEpc(hex);
             if (readBib === bibNum) {
                 return { success: true, message: `Bib ${bibNum} written and verified.` };
             }
@@ -338,6 +371,11 @@ class BleDriver {
     // restarts the scan loop. Writing WM=0x01 to flash breaks CtrlAutoRead(1) until
     // the next reboot. See PROTOCOL_SPEC.md §6.
     async setWorkMode(mode) {
+        if (mode !== 'command' && mode !== 'active') throw new Error(`Invalid mode "${mode}" — expected 'command' or 'active'`);
+        // §6.4 CtrlAutoRead: CID1=34 CID2=00 LEN=01 INFO=00 (stop) / INFO=01 (start) [CHKSUM].
+        // Response CC FF FF 34 00 00 02 is sent by the reader but not reliably received
+        // during active-mode scan traffic — fire and forget per KNOWN_ISSUES "Mode switch
+        // fully resolved 2026-07-07" (both cases confirmed working with sendRawHex).
         await this.sendRawHex(mode === 'command' ? '7CFFFF34000100' : '7CFFFF34000101');
     }
 
@@ -347,6 +385,7 @@ class BleDriver {
     // onTagRead normally — they never satisfy this promise.
     sendCommand(hexString, expectedCid1, timeoutMs = 1000) {
         if (!this.writeCharacteristic) return Promise.reject(new Error('No write pipe available'));
+        if (this._pendingCommand) return Promise.reject(new Error('Command already in flight — only one sendCommand at a time'));
 
         return new Promise((resolve, reject) => {
             const timer = setTimeout(() => {
@@ -395,10 +434,13 @@ class BleDriver {
     async disconnect() {
         this.intentionalDisconnect = true;
         this.isAutoReconnecting = false;
+        this._stopHeartbeat();
         localStorage.removeItem('bleDeviceId');
         localStorage.removeItem('bleDeviceName');
         if (this.device && this.device.gatt.connected) await this.device.gatt.disconnect();
         this.device = null;
+        this.writeCharacteristic = null;
+        this.notifyCharacteristic = null;
         this.updateStatus("READER OFFLINE", false);
     }
 

@@ -44,9 +44,9 @@ class AppUI {
             this.updateInspector(payload);
         };
 
-        // Web Bluetooth events fire regardless of tab visibility, so no tag reads are lost.
-        this._visibilityHandler = () => this.handleVisibilityChange();
-        document.addEventListener('visibilitychange', this._visibilityHandler);
+        this.driver.onLog = (msg) => {
+            this.sysLog(msg);
+        };
 
         // Link Engine to UI
         this.engine.onRecordPersisted = (record) => {
@@ -71,9 +71,7 @@ class AppUI {
             this.sysLog(`Recovered race: ${new Date(this.engine.raceStartTime).toLocaleTimeString()}`);
             this.startVisualClock();
 
-            const wasTracking = localStorage.getItem('isTrackingRace') === 'true';
-            if (wasTracking) {
-                this.engine.isTrackingRace = true;
+            if (this.engine.isTrackingRace) {
                 this.updateRaceStatus(true);
                 this.startBackupTimer();
             }
@@ -202,6 +200,18 @@ class AppUI {
             btn.style.color = running ? "var(--error)" : "gold";
             btn.style.borderColor = running ? "var(--error)" : "gold";
         }
+        ['mappingTabBtn', 'inspectorTabBtn'].forEach(id => {
+            const tabBtn = document.getElementById(id);
+            if (tabBtn) tabBtn.disabled = running;
+        });
+        if (running) {
+            const onRestricted = ['mapping-tab', 'inspector-tab']
+                .some(id => document.getElementById(id)?.classList.contains('active'));
+            if (onRestricted) {
+                const raceTabBtn = document.getElementById('raceTabBtn');
+                if (raceTabBtn) this.switchTab('race-tab', raceTabBtn);
+            }
+        }
     }
 
     addLiveTableRow(record) {
@@ -212,6 +222,15 @@ class AppUI {
         const row = `<tr><td>${new Date(record.timestamp).toLocaleTimeString()}</td><td style="color:var(--data);">${record.tag_hex}</td><td>${record.rssi} dBm</td></tr>`;
         tbody.insertAdjacentHTML('afterbegin', row);
         if (tbody.children.length > 50) tbody.removeChild(tbody.lastChild);
+    }
+
+    switchTab(id, el) {
+        const restricted = ['mapping-tab', 'inspector-tab'];
+        if (this.engine.isTrackingRace && restricted.includes(id)) return;
+        document.querySelectorAll('.tab-content').forEach(t => t.className = 'tab-content');
+        document.querySelectorAll('.tab-btn').forEach(b => b.className = 'tab-btn');
+        document.getElementById(id).className = 'tab-content active';
+        el.className = 'tab-btn active';
     }
 
     isKioskMode() {
@@ -396,6 +415,16 @@ class AppUI {
         log.scrollTop = log.scrollHeight;
     }
 
+    bibProgLog(msg, isError = false) {
+        const el = document.getElementById('bibProgLog');
+        if (!el) return;
+        if (el.innerHTML.includes('No activity yet')) el.innerHTML = '';
+        const color = isError ? 'var(--error)' : 'var(--data)';
+        el.innerHTML = `<div style="color:${color}">[${new Date().toLocaleTimeString()}] ${msg}</div>` + el.innerHTML;
+        const entries = el.querySelectorAll('div');
+        if (entries.length > 30) entries[entries.length - 1].remove();
+    }
+
     updateInspector({ hex, checksumValid, tagDecode }) {
         const detail = document.getElementById('inspectorDetail');
         const history = document.getElementById('inspectorHistoryBody');
@@ -468,9 +497,11 @@ class AppUI {
     }
 
     async setBibProgrammingMode(active) {
+        this.bibProgLog(active ? 'Starting session — sending CtrlAutoRead(0)...' : 'Ending session — sending CtrlAutoRead(1)...');
         try {
             await this.driver.setWorkMode(active ? 'command' : 'active');
         } catch (e) {
+            this.bibProgLog(`MODE ERROR: ${e.message}`, true);
             this.sysLog(`MODE ERROR: ${e.message}`, true);
             return;
         }
@@ -478,21 +509,20 @@ class AppUI {
         if (section) section.style.display = active ? '' : 'none';
         const startBtn = document.getElementById('startBibProgBtn');
         if (startBtn) startBtn.textContent = active ? 'End Programming Session' : 'Start Programming Session';
-        this.sysLog(`SYSTEM: Bib programming ${active ? 'started — reader is quiet' : 'ended — reader back to active scanning'}.`);
+        this.bibProgLog(active ? 'Reader is quiet — ready to program.' : 'Reader resumed active scanning.');
+        this.sysLog(`SYSTEM: Bib programming ${active ? 'started' : 'ended'}.`);
     }
 
     async writeBibToScannedTag() {
         const bibInput = document.getElementById('bibProgBibNum');
-        const statusEl = document.getElementById('bibProgStatus');
         const bibNum = parseInt(bibInput?.value, 10);
         if (!bibInput || isNaN(bibNum) || bibNum < 1) {
-            if (statusEl) statusEl.textContent = 'Enter a valid bib number first.';
+            this.bibProgLog('Enter a valid bib number first.', true);
             return;
         }
-        if (statusEl) statusEl.textContent = 'Place chip near reader… (up to 5s)';
-        // Reader stays in command mode. writeBibToEpc polls for a chip, then writes.
+        this.bibProgLog(`Writing Bib ${bibNum}... (scanning up to 5s)`);
         const result = await this.driver.writeBibToEpc(bibNum);
-        if (statusEl) statusEl.textContent = result.success ? `✓ ${result.message}` : `✗ ${result.message}`;
+        this.bibProgLog(result.success ? `✓ ${result.message}` : `✗ ${result.message}`, !result.success);
         if (result.success) {
             this.sysLog(`BIB PROG: Bib ${bibNum} written and verified.`);
             if (bibInput) bibInput.value = bibNum + 1;
@@ -500,27 +530,17 @@ class AppUI {
     }
 
     async verifyBibChip() {
-        const statusEl = document.getElementById('bibProgStatus');
-        if (statusEl) statusEl.textContent = 'Scanning… wave chip near reader (up to 5s)';
+        this.bibProgLog('Scanning chip... (up to 5s)');
         const result = await this.driver.scanForTag(5000);
         if (!result) {
-            if (statusEl) statusEl.textContent = 'No chip detected.';
+            this.bibProgLog('No chip detected.');
             return;
         }
         const bib = this.decodeBibFromEpc(result.epcHex);
-        if (bib !== null) {
-            if (statusEl) statusEl.textContent = `BIB: ${bib} (OrcStomp encoded, ${result.rssiDbm} dBm)`;
-        } else {
-            if (statusEl) statusEl.textContent = `Not programmed — EPC: ${result.epcHex}`;
-        }
-    }
-
-    handleVisibilityChange() {
-        if (document.hidden) {
-            this.sysLog('Tab hidden — BLE reads continue, display throttled by browser.');
-        } else {
-            this.sysLog('Tab visible — display restored.');
-        }
+        this.bibProgLog(bib !== null
+            ? `BIB: ${bib} (OrcStomp encoded, ${result.rssiDbm} dBm)`
+            : `Not programmed — EPC: ${result.epcHex}`
+        );
     }
 
     formatWallClock(isoString) {
@@ -532,56 +552,9 @@ class AppUI {
         return `${hh}:${mm}:${ss}.${ms}`;
     }
 
-    // Returns the bib number encoded in an EPC hex string, or null if not present.
-    // Encoding: first 4 hex chars must be "4F53" (magic), next 4 hex chars are bib as 16-bit big-endian.
-    decodeBibFromEpc(epcHex) {
-        if (!epcHex || epcHex.length < 8) return null;
-        if (epcHex.toUpperCase().slice(0, 4) !== '4F53') return null;
-        return parseInt(epcHex.slice(4, 8), 16);
-    }
-
-    buildResultsFromReads(reads, maps, raceStartMs) {
-        const chipToBib = {};
-        maps.forEach(m => chipToBib[m.chip_hex] = m.bib_num);
-
-        const groups = {};
-        reads.forEach(r => {
-            if (!groups[r.tag_hex]) groups[r.tag_hex] = [];
-            groups[r.tag_hex].push(r);
-        });
-
-        const results = {};
-        Object.keys(groups).forEach(hex => {
-            const tagReads = groups[hex].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-            const firstRead = tagReads[0];
-            const windowLimitMs = new Date(firstRead.timestamp).getTime() + 10000;
-            let bestRead = firstRead;
-            for (const r of tagReads) {
-                if (new Date(r.timestamp).getTime() > windowLimitMs) break;
-                if (r.rssi > bestRead.rssi) bestRead = r;
-            }
-            const elapsedMs = new Date(bestRead.timestamp).getTime() - raceStartMs;
-            const epcBib = this.decodeBibFromEpc(hex);
-            const bib = epcBib !== null ? epcBib : chipToBib[hex];
-            if (bib === undefined) return; // no OS encoding and no chip_map entry — skip noise
-            results[hex] = {
-                bib,
-                elapsedMs,
-                elapsed: this.formatTime(elapsedMs),
-                wallClock: this.formatWallClock(bestRead.timestamp),
-            };
-        });
-        return results;
-    }
-
-    buildCsvString(results) {
-        let csv = 'Bib,Elapsed Time,Wall Clock,Chip\n';
-        Object.keys(results).forEach(hex => {
-            const r = results[hex];
-            csv += `"${r.bib}","${r.elapsed}","${r.wallClock}","${hex}"\n`;
-        });
-        return csv;
-    }
+    // Thin wrapper so existing callers using this.decodeBibFromEpc() keep working.
+    // The implementation lives in utils.js (loaded before AppUI).
+    decodeBibFromEpc(epcHex) { return decodeBibFromEpc(epcHex); }
 
     // Computes and downloads the standings CSV (same logic previously inline as
     // index.html's app.exportCsv). Returns false without downloading anything if
@@ -592,8 +565,8 @@ class AppUI {
         if (!reads.length) return false;
         const maps = await this.engine.getAllFromStore('chip_map');
         const startMs = new Date(this.engine.raceStartTime).getTime();
-        const results = this.buildResultsFromReads(reads, maps, startMs);
-        const csv = this.buildCsvString(results);
+        const results = this.engine.buildResultsFromReads(reads, maps, startMs);
+        const csv = this.engine.buildCsvString(results);
         const blob = new Blob([csv], { type: 'text/csv' });
         const url = window.URL.createObjectURL(blob);
         const a = document.createElement('a');

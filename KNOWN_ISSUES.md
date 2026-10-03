@@ -12,15 +12,14 @@ Context: this is a DIY RFID 5k timing rig built around a cheap Chinese UHF reade
 
 2. **TID read (Bank 2) is unverified.** Command `7CFFFF123203020006` is protocol-correct but has never been tested in Command mode. Theory: Active-mode auto-broadcasts collide with on-demand commands, so it may only work after `setWorkMode('command')`. The UI button was removed in the 2026-07-12 cleanup — if TID read is ever needed, add it back only after confirming it works in Command mode.
 
-3. ~~`MockBleDriver` frame shape disagrees with the real `BleDriver`.~~ **Resolved 2026-06-30** — see Resolved section below.
 
 4. ~~Ingestion-side dedup is documented but not implemented.~~ **Resolved 2026-07-01** — see Resolved section below.
 
-5. **Read vs. Write `SA` pointer units disagree within the manual itself.** Section 4.6 says Write's `SA` is a byte pointer; Section 4.7 says Read's `SA` is a word pointer — both use the same example value. This directly affects whether `writeBibToTag()`'s assumption about EPC word offset 2 is correct (see Unconfirmed list below). Documented in `PROTOCOL_SPEC.md` Section 5.
+~~5. **Read vs. Write `SA` pointer units disagree within the manual itself.**~~ **Resolved 2026-10-01** — moot: CID1=0x12 (the command with the SA ambiguity) produces no response on this hardware and is not used. The codebase uses CID1=0x22 exclusively; SA=02 (word offset 2) is confirmed correct on hardware. Ambiguity documented in `PROTOCOL_SPEC.md` Section 5 for reference.
 
 6. ~~`establishConnection()` reports "READER ONLINE" success even if zero characteristics were ever found.~~ **Resolved 2026-06-30** — see Resolved section below.
 
-7. **`parseFrame()` has no cross-notification reassembly buffer.** `BleDriver.js` parses each `characteristicvaluechanged` event's bytes in isolation with zero carry-over. If a single protocol frame's total length ever exceeds the negotiated BLE notification payload size and arrives split across two or more separate events, the first partial chunk fails its `frameEnd > bytes.length` check and is silently dropped — no warning, nothing. Not currently confirmed to be biting anything (a real 41-byte Get Version reply decoded fine, implying this hardware/Chrome/Windows combo negotiates a large-enough MTU in practice), but a longer response (e.g. multi-tag identify with several EPCs) could hit it. Would need a deliberately oversized real response to confirm the actual risk either way.
+~~7. **`parseFrame()` has no cross-notification reassembly buffer.**~~ **Resolved 2026-10-01 (won't fix)** — has not caused an observable problem across multiple real races; negotiated MTU is sufficient for all frames seen in production. A regression test in `tests/regression.test.js` ("frame split across two notifications") documents the current single-notification-only behavior as intentional, so any future reassembly work has a baseline to go green from first.
 
 8. ~~Chip-to-Bib mapping has zero duplicate protection — two distinct gaps.~~ **Resolved 2026-07-05** for the kiosk form path — see Resolved below.
 9. ~~Bulk CSV chip-map import bypasses the reassignment guardrails added for the kiosk form.~~ **Resolved 2026-07-05** — see Resolved below.
