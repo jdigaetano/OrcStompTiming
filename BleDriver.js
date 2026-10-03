@@ -343,15 +343,18 @@ class BleDriver {
         }
 
         // Step 2: Write immediately while the tag is still singulated.
+        // This reader sometimes returns RTN=01 on a successful write — don't bail out
+        // immediately. Fall through to verify (step 3), which is the authoritative signal.
+        let writeError = null;
         try {
             await this.sendCommand(writeHex, 0x22);
         } catch (e) {
-            return { success: false, message: e.message };
+            writeError = e;
         }
 
         // Step 3: Verify — re-poll and confirm the correct bib was written.
         // Catches adjacent chip interference (wrong chip singulated during step 1).
-        // Timeout degrades to plain success — chip moved away too fast, not a write failure.
+        // If verify times out, fall back on the write command result.
         const verify = await this.scanForTag(2000, 400);
         if (verify) {
             const hex = verify.epcHex.toUpperCase();
@@ -362,7 +365,9 @@ class BleDriver {
             if (readBib !== null) {
                 return { success: false, message: `WRONG CHIP: chip reads bib ${readBib}, not ${bibNum} — keep only ONE chip near reader.` };
             }
+            return { success: false, message: writeError?.message ?? `Write failed: chip EPC not updated (${hex}).` };
         }
+        if (writeError) return { success: false, message: writeError.message };
         return { success: true, message: `Bib ${bibNum} written.` };
     }
 

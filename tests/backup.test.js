@@ -85,6 +85,7 @@ function makeStubEngine(overrides = {}) {
         getBackupHandle: vi.fn().mockResolvedValue(null),
         saveBackupHandle: vi.fn().mockResolvedValue(undefined),
         buildResultsFromReads: vi.fn().mockReturnValue({}),
+        buildUnknownResultsFromReads: vi.fn().mockReturnValue({}),
         buildCsvString: vi.fn().mockReturnValue('Bib,Elapsed Time,Wall Clock,Chip\n'),
         ...overrides,
     };

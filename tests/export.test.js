@@ -192,6 +192,57 @@ describe('TimingEngine.buildResultsFromReads() — EPC-encoded bib', () => {
     });
 });
 
+// ─── buildUnknownResultsFromReads ───────────────────────────────────────────
+
+describe('TimingEngine.buildUnknownResultsFromReads()', () => {
+    const START = new Date('2026-06-30T10:00:00.000Z').getTime();
+
+    function makeRead(tag, rssi, offsetMs) {
+        return { tag_hex: tag, rssi, timestamp: new Date(START + offsetMs).toISOString() };
+    }
+
+    const OS1  = '4F530001' + '00'.repeat(8); // OrcStomp bib 1 — known
+    const UNK1 = 'DEADBEEF00112233';           // non-OrcStomp, not in chip map
+    const UNK2 = 'CAFEBABE00112233';           // second unknown chip
+
+    it('includes only non-OrcStomp chips not in chip_map, excludes OS-encoded chips', () => {
+        const reads = [makeRead(OS1, -60, 1000), makeRead(UNK1, -70, 2000)];
+        const results = engineForExport.buildUnknownResultsFromReads(reads, [], START);
+        expect(results[UNK1]).toBeDefined();
+        expect(results[OS1]).toBeUndefined();
+    });
+
+    it('sets bib to the EPC hex string for unrecognized chips', () => {
+        const reads = [makeRead(UNK1, -60, 1000)];
+        const results = engineForExport.buildUnknownResultsFromReads(reads, [], START);
+        expect(typeof results[UNK1].bib).toBe('string');
+        expect(results[UNK1].bib.toUpperCase()).toBe(UNK1.toUpperCase());
+    });
+
+    it('applies the same 10s-window dedup as the main export — picks best RSSI within window', () => {
+        const reads = [
+            makeRead(UNK1, -70,  0),
+            makeRead(UNK1, -50, 3000), // best RSSI, still in window → this one wins
+            makeRead(UNK1, -60, 7000),
+        ];
+        const results = engineForExport.buildUnknownResultsFromReads(reads, [], START);
+        expect(results[UNK1].elapsedMs).toBe(3000);
+    });
+
+    it('returns an empty object when all reads are known chips', () => {
+        const reads = [makeRead(OS1, -60, 1000)];
+        const results = engineForExport.buildUnknownResultsFromReads(reads, [], START);
+        expect(Object.keys(results)).toHaveLength(0);
+    });
+
+    it('excludes a chip-map-registered non-OrcStomp chip (known via chip_map, not prefix)', () => {
+        const reads = [makeRead(UNK1, -60, 1000)];
+        const maps = [{ chip_hex: UNK1, bib_num: 42 }];
+        const results = engineForExport.buildUnknownResultsFromReads(reads, maps, START);
+        expect(results[UNK1]).toBeUndefined();
+    });
+});
+
 // ─── buildCsvString ─────────────────────────────────────────────────────────
 
 describe('TimingEngine.buildCsvString() — full coverage', () => {
