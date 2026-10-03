@@ -102,3 +102,22 @@ describe('BleDriver.sendCommand()', () => {
         expect(frame[3]).toBe(0x20);
     });
 });
+
+describe('BleDriver.sendRawHex()', () => {
+    let BleDriver, driver;
+
+    beforeEach(() => {
+        global.localStorage.clear();
+        BleDriver = loadScript('BleDriver.js');
+        driver = new BleDriver();
+    });
+
+    it('falls back to writeValue when writeValueWithoutResponse throws (ffe3 only supports write, not writeWithoutResponse)', async () => {
+        driver.writeCharacteristic = {
+            writeValueWithoutResponse: vi.fn().mockRejectedValue(new Error('GATT operation not permitted')),
+            writeValue: vi.fn().mockResolvedValue(undefined),
+        };
+        await expect(driver.sendRawHex('7CFFFF34000100')).resolves.toBeUndefined();
+        expect(driver.writeCharacteristic.writeValue).toHaveBeenCalled();
+    });
+});

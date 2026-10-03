@@ -227,6 +227,18 @@ describe('BleDriver Connection Lifecycle', () => {
             expect(notifyChar.startNotifications).toHaveBeenCalled();
         });
 
+        it('maps ffe3 as the write characteristic when present (this hardware uses ffe3 for writes, not ffe1)', async () => {
+            const notifyChar = makeCharacteristic('0000ffe2-0000-1000-8000-00805f9b34fb', { notify: true });
+            const writeChar = makeCharacteristic('0000ffe3-0000-1000-8000-00805f9b34fb', { write: true });
+            const service = makeService('0000ffe0-0000-1000-8000-00805f9b34fb', [notifyChar, writeChar]);
+            driver.device = makeWorkingDevice([service]);
+
+            await driver.establishConnection();
+
+            expect(driver.writeCharacteristic).toBe(writeChar);
+            expect(driver.notifyCharacteristic).toBe(notifyChar);
+        });
+
         it('falls back to a single ffe1 characteristic for both notify and write when no separate ffe2/ffe3 exists', async () => {
             const onlyChar = makeCharacteristic('0000ffe1-0000-1000-8000-00805f9b34fb', { write: true, notify: true });
             const service = makeService('0000ffe0-0000-1000-8000-00805f9b34fb', [onlyChar]);

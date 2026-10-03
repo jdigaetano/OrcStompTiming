@@ -107,7 +107,7 @@ class BleDriver {
                 const chars = await service.getCharacteristics();
                 for (const c of chars) {
                     if (c.uuid.includes('ffe2')) this.notifyCharacteristic = c;
-                    if (c.uuid.includes('ffe1')) {
+                    if (c.uuid.includes('ffe3') || c.uuid.includes('ffe1')) {
                         if (c.properties.write || c.properties.writeWithoutResponse) {
                             this.writeCharacteristic = c;
                         }
@@ -381,7 +381,11 @@ class BleDriver {
         }
 
         const data = new Uint8Array(finalHex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
-        await this.writeCharacteristic.writeValueWithoutResponse(data);
+        try {
+            await this.writeCharacteristic.writeValueWithoutResponse(data);
+        } catch {
+            await this.writeCharacteristic.writeValue(data);
+        }
     }
 
     updateStatus(msg, connected) {
