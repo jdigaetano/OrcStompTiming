@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 
@@ -78,5 +78,40 @@ describe('L2 Dedup: 10-second write gate', () => {
         expect(engine.seenTags.size).toBeGreaterThan(0);
         await engine.clearRaceData();
         expect(engine.seenTags.size).toBe(0);
+    });
+
+    it('re-queues the batch when the IDB transaction fires onerror so no reads are silently lost', async () => {
+        // Replace db.transaction with a fake that immediately fires onerror when the
+        // handler is assigned — simulating a write failure (quota, IDB error, etc.)
+        engine.db = {
+            transaction: vi.fn().mockReturnValue({
+                objectStore: () => ({ add: () => {} }),
+                set onerror(fn) { fn({ target: { error: new Error('quota exceeded') } }); },
+                set oncomplete(fn) { /* never fires */ },
+            }),
+        };
+        engine.handleIncomingTag('TAG_A', -50);
+        await new Promise(r => setTimeout(r, 400));
+        expect(engine.writeQueue.length).toBeGreaterThan(0);
+    });
+
+    it('fires onRecordPersisted only after the IDB transaction commits, not before', async () => {
+        const notified = [];
+        engine.onRecordPersisted = (r) => notified.push(r);
+        let completeHandler = null;
+        engine.db = {
+            transaction: vi.fn().mockReturnValue({
+                objectStore: () => ({ add: () => {} }),
+                set oncomplete(fn) { completeHandler = fn; },
+                set onerror(fn) { /* never fires */ },
+            }),
+        };
+        engine.handleIncomingTag('TAG_A', -50);
+        await new Promise(r => setTimeout(r, 400));
+        // Daemon has fired but oncomplete hasn't fired yet — no notification expected
+        expect(notified).toHaveLength(0);
+        // Now simulate the transaction committing
+        completeHandler?.();
+        expect(notified).toHaveLength(1);
     });
 });

@@ -372,12 +372,11 @@ class BleDriver {
     // the next reboot. See PROTOCOL_SPEC.md §6.
     async setWorkMode(mode) {
         if (mode !== 'command' && mode !== 'active') throw new Error(`Invalid mode "${mode}" — expected 'command' or 'active'`);
-        // §6.4 CtrlAutoRead: CID1=34 CID2=00 LEN=01 INFO=00/01 [CHKSUM]. Response CID1=0x34, RTN=00.
-        await this.sendCommand(
-            mode === 'command' ? '7CFFFF34000100' : '7CFFFF34000101',
-            0x34,
-            3000
-        );
+        // §6.4 CtrlAutoRead: CID1=34 CID2=00 LEN=01 INFO=00 (stop) / INFO=01 (start) [CHKSUM].
+        // Response CC FF FF 34 00 00 02 is sent by the reader but not reliably received
+        // during active-mode scan traffic — fire and forget per KNOWN_ISSUES "Mode switch
+        // fully resolved 2026-07-07" (both cases confirmed working with sendRawHex).
+        await this.sendRawHex(mode === 'command' ? '7CFFFF34000100' : '7CFFFF34000101');
     }
 
     // Sends a command and returns a Promise that resolves with the raw response frame

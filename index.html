@@ -26,6 +26,7 @@
         .nav-tabs { display: flex; border-bottom: 2px solid var(--bg-secondary); margin-bottom: 20px; gap: 5px; }
         .tab-btn { background: var(--bg-secondary); color: var(--text-dim); border: none; padding: 12px 24px; cursor: pointer; font-family: inherit; font-size: 14px; font-weight: bold; border-radius: 5px 5px 0 0; }
         .tab-btn.active { background: var(--accent); color: var(--bg-primary); }
+        .tab-btn:disabled { opacity: 0.35; cursor: not-allowed; }
         .tab-content { display: none; background: var(--bg-secondary); padding: 20px; border-radius: 5px; border: 1px solid #222; }
         .tab-content.active { display: block; }
 
@@ -264,13 +265,6 @@
             const forgetBtn = document.getElementById('forgetDeviceBtn');
             if (forgetBtn) forgetBtn.style.display = 'none';
             app.sysLog('SYSTEM: Saved device forgotten — next connect will use the device picker.');
-        };
-
-        app.switchTab = (id, el) => {
-            document.querySelectorAll('.tab-content').forEach(t => t.className = 'tab-content');
-            document.querySelectorAll('.tab-btn').forEach(b => b.className = 'tab-btn');
-            document.getElementById(id).className = 'tab-content active';
-            el.className = 'tab-btn active';
         };
 
         app.saveMapping = async (e) => {

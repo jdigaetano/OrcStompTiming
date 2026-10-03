@@ -81,6 +81,7 @@ class TimingEngine {
 
             const tx = this.db.transaction(['race_reads'], 'readwrite');
             const store = tx.objectStore('race_reads');
+            const written = [];
 
             batch.forEach(record => {
                 const recordTime = new Date(record.timestamp).getTime();
@@ -92,10 +93,16 @@ class TimingEngine {
                     this.seenTags.set(record.tag_hex, recordTime);
                 }
                 store.add(record);
-                if (this.onRecordPersisted) this.onRecordPersisted(record);
+                written.push(record);
             });
 
-            tx.onerror = (e) => console.error("TimingEngine: Batch write failed", e.target.error);
+            tx.oncomplete = () => {
+                written.forEach(r => { if (this.onRecordPersisted) this.onRecordPersisted(r); });
+            };
+            tx.onerror = (e) => {
+                console.error("TimingEngine: Batch write failed", e.target.error);
+                this.writeQueue = [...batch, ...this.writeQueue];
+            };
         }, 250);
     }
 

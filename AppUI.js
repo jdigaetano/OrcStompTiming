@@ -200,6 +200,18 @@ class AppUI {
             btn.style.color = running ? "var(--error)" : "gold";
             btn.style.borderColor = running ? "var(--error)" : "gold";
         }
+        ['mappingTabBtn', 'inspectorTabBtn'].forEach(id => {
+            const tabBtn = document.getElementById(id);
+            if (tabBtn) tabBtn.disabled = running;
+        });
+        if (running) {
+            const onRestricted = ['mapping-tab', 'inspector-tab']
+                .some(id => document.getElementById(id)?.classList.contains('active'));
+            if (onRestricted) {
+                const raceTabBtn = document.getElementById('raceTabBtn');
+                if (raceTabBtn) this.switchTab('race-tab', raceTabBtn);
+            }
+        }
     }
 
     addLiveTableRow(record) {
@@ -210,6 +222,15 @@ class AppUI {
         const row = `<tr><td>${new Date(record.timestamp).toLocaleTimeString()}</td><td style="color:var(--data);">${record.tag_hex}</td><td>${record.rssi} dBm</td></tr>`;
         tbody.insertAdjacentHTML('afterbegin', row);
         if (tbody.children.length > 50) tbody.removeChild(tbody.lastChild);
+    }
+
+    switchTab(id, el) {
+        const restricted = ['mapping-tab', 'inspector-tab'];
+        if (this.engine.isTrackingRace && restricted.includes(id)) return;
+        document.querySelectorAll('.tab-content').forEach(t => t.className = 'tab-content');
+        document.querySelectorAll('.tab-btn').forEach(b => b.className = 'tab-btn');
+        document.getElementById(id).className = 'tab-content active';
+        el.className = 'tab-btn active';
     }
 
     isKioskMode() {
