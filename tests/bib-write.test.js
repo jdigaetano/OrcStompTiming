@@ -223,6 +223,26 @@ describe('BleDriver.writeBibToEpc()', () => {
         expect(result.success).toBe(false);
         expect(result.message).toBeTruthy();
     });
+
+    it('returns {success: true, verified} when write returns RTN=01 but verify confirms the bib was written (reader quirk — reports fail but writes anyway)', async () => {
+        vi.spyOn(driver, 'sendCommand')
+            .mockResolvedValueOnce(makePollResponse())
+            .mockRejectedValueOnce(new Error('Command failed: reader returned RTN=01 (Fail)'))
+            .mockResolvedValueOnce(makeFullTagFrameWithBib(104));
+        const result = await driver.writeBibToEpc(104);
+        expect(result.success).toBe(true);
+        expect(result.message).toMatch(/verified/i);
+    });
+
+    it('returns WRONG CHIP (not a bare RTN=01 error) when write returns RTN=01 but verify finds a different bib nearby', async () => {
+        vi.spyOn(driver, 'sendCommand')
+            .mockResolvedValueOnce(makePollResponse())
+            .mockRejectedValueOnce(new Error('Command failed: reader returned RTN=01 (Fail)'))
+            .mockResolvedValueOnce(makeFullTagFrameWithBib(999)); // adjacent chip
+        const result = await driver.writeBibToEpc(104);
+        expect(result.success).toBe(false);
+        expect(result.message).toMatch(/WRONG CHIP/i);
+    });
 });
 
 describe('BleDriver.scanForTag()', () => {

@@ -576,6 +576,22 @@ class AppUI {
         return true;
     }
 
+    async downloadUnknownsCsv() {
+        const reads = await this.engine.getAllFromStore('race_reads');
+        const maps = await this.engine.getAllFromStore('chip_map');
+        const startMs = new Date(this.engine.raceStartTime).getTime();
+        const results = this.engine.buildUnknownResultsFromReads(reads, maps, startMs);
+        if (!Object.keys(results).length) return false;
+        const csv = this.engine.buildCsvString(results);
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.setAttribute('href', url);
+        a.setAttribute('download', `race-unknowns-${Date.now()}.csv`);
+        a.click();
+        return true;
+    }
+
     // Writes a complete snapshot to a previously-chosen file handle, overwriting
     // it in full each time (not an append/patch) — see TimingEngine.getRawSnapshot.
     async writeSnapshotToFile(handle, snapshot) {
@@ -599,6 +615,7 @@ class AppUI {
     async performHeavyBackup() {
         await this.performLiveBackup();
         await this.downloadStandingsCsv();
+        await this.downloadUnknownsCsv();
     }
 
     buildWipeConfirmMessage(readCount, mappingCount, includeMappings) {

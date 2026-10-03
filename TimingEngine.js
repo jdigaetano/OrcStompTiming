@@ -233,6 +233,42 @@ class TimingEngine {
         return results;
     }
 
+    buildUnknownResultsFromReads(reads, maps, raceStartMs) {
+        const chipToBib = {};
+        (maps || []).forEach(m => chipToBib[m.chip_hex] = m.bib_num);
+
+        const groups = {};
+        reads.forEach(r => {
+            if (!r.tag_hex) return;
+            if (!groups[r.tag_hex]) groups[r.tag_hex] = [];
+            groups[r.tag_hex].push(r);
+        });
+
+        const results = {};
+        Object.keys(groups).forEach(hex => {
+            const epcBib = decodeBibFromEpc(hex);
+            const bib = epcBib !== null ? epcBib : chipToBib[hex];
+            if (bib !== undefined) return; // known chip — skip
+
+            const tagReads = groups[hex].sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+            const firstRead = tagReads[0];
+            const windowLimitMs = new Date(firstRead.timestamp).getTime() + 10000;
+            let bestRead = firstRead;
+            for (const r of tagReads) {
+                if (new Date(r.timestamp).getTime() > windowLimitMs) break;
+                if (r.rssi > bestRead.rssi) bestRead = r;
+            }
+            const elapsedMs = new Date(bestRead.timestamp).getTime() - raceStartMs;
+            results[hex] = {
+                bib: hex,
+                elapsedMs,
+                elapsed: this._formatTime(elapsedMs),
+                wallClock: this._formatWallClock(bestRead.timestamp),
+            };
+        });
+        return results;
+    }
+
     buildCsvString(results) {
         let csv = 'Bib,Elapsed Time,Wall Clock,Chip\n';
         Object.keys(results).forEach(hex => {

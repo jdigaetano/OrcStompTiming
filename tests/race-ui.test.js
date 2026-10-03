@@ -113,6 +113,7 @@ describe('AppUI.toggleRace()', () => {
             getRawSnapshot: () => Promise.resolve({ raceStartTime: null, race_reads: [], chip_map: [] }),
             getAllFromStore: () => Promise.resolve([]),
             buildResultsFromReads: () => ({}),
+            buildUnknownResultsFromReads: () => ({}),
             buildCsvString: () => 'Bib,Elapsed Time,Wall Clock,Chip\n',
             ...overrides,
         };
