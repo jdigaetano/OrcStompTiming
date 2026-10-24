@@ -86,6 +86,14 @@
 
     <div id="race-tab" class="tab-content active">
         <div class="control-panel">
+            <div id="driverSelector" style="display:flex; gap:8px; margin-bottom:8px;">
+                <button id="bleDriverBtn" class="btn" onclick="app.selectDriver('ble')" style="font-size:11px; padding:8px 12px;">BLE Handheld</button>
+                <button id="ethernetDriverBtn" class="btn" onclick="app.selectDriver('ethernet')" style="font-size:11px; padding:8px 12px;">FX9600 Ethernet</button>
+            </div>
+            <div id="ethernetIpRow" style="display:none; margin-bottom:8px; display:none;">
+                <input type="text" id="ethernetIpInput" placeholder="Reader IP (e.g. 192.168.1.100)" autocomplete="off" style="width:220px; padding:6px; background:#1a1a2e; border:1px solid #444; color:#eee; border-radius:4px;">
+                <button class="btn" onclick="app.forgetEthernetIp()" style="font-size:11px; margin-left:6px; color:#555; border-color:#555;">Forget IP</button>
+            </div>
             <button id="connectBtn" class="btn" onclick="app.handleConnectionBtn()">Connect Reader</button>
             <button id="forgetDeviceBtn" class="btn" onclick="app.forgetDevice()" style="display:none; font-size:11px; color:#555; border-color:#555;">Forget Device</button>
             <button id="retryConnectBtn" class="btn" onclick="app.handleRetryBtn()" style="display:none; color:orange; border-color:orange;">Retry Connection</button>
@@ -132,6 +140,9 @@
     </div>
 
     <div id="mapping-tab" class="tab-content">
+        <div id="ethernetKioskBanner" style="display:none; background:#0a0a2b; border:1px solid #4466ff; color:#8899ff; padding:10px; border-radius:4px; margin-bottom:12px; font-size:13px;">
+            <strong>Chip programming unavailable:</strong> Switch to BLE Handheld mode in the reader selector to program chips.
+        </div>
         <div class="control-panel" style="background: #2b1a0a; border: 1px solid #ff8800; color: #ffaa55;">
             <strong>KIOSK MODE ARMED:</strong> Waving a physical race tag near the antenna will instantly auto-populate the form fields below.
         </div>
@@ -241,19 +252,67 @@
     <!-- Architectural Scripts -->
     <script src="utils.js"></script>
     <script src="BleDriver.js"></script>
+    <script src="EthernetDriver.js"></script>
 <script src="TimingEngine.js"></script>
     <script src="AppUI.js"></script>
 
     <script>
         // Orchestration Layer
-        let driver = new BleDriver();
+        const _savedDriverType = localStorage.getItem('driverType') ?? 'ble';
+        let driver = _savedDriverType === 'ethernet' ? new EthernetDriver() : new BleDriver();
         const engine = new TimingEngine();
         let app = new AppUI(engine, driver);
 
+        function _updateDriverUI(type) {
+            const bleBtn = document.getElementById('bleDriverBtn');
+            const ethBtn = document.getElementById('ethernetDriverBtn');
+            const ipRow = document.getElementById('ethernetIpRow');
+            const kioskBanner = document.getElementById('ethernetKioskBanner');
+            const retryNote = document.getElementById('retryConnectNote');
+            if (type === 'ethernet') {
+                if (bleBtn) { bleBtn.style.color = ''; bleBtn.style.borderColor = ''; }
+                if (ethBtn) { ethBtn.style.color = 'gold'; ethBtn.style.borderColor = 'gold'; }
+                if (ipRow) ipRow.style.display = 'block';
+                if (kioskBanner) kioskBanner.style.display = 'block';
+                if (retryNote) retryNote.textContent = 'If still failing: check the reader IP and ensure ZIoTC is configured.';
+            } else {
+                if (bleBtn) { bleBtn.style.color = 'gold'; bleBtn.style.borderColor = 'gold'; }
+                if (ethBtn) { ethBtn.style.color = ''; ethBtn.style.borderColor = ''; }
+                if (ipRow) ipRow.style.display = 'none';
+                if (kioskBanner) kioskBanner.style.display = 'none';
+                if (retryNote) retryNote.textContent = 'If still failing: toggle Bluetooth off/on in Windows Settings, then retry.';
+            }
+        }
+
+        _updateDriverUI(_savedDriverType);
+        if (_savedDriverType === 'ethernet') {
+            const saved = localStorage.getItem('ethernetReaderIp');
+            if (saved) { const el = document.getElementById('ethernetIpInput'); if (el) el.value = saved; }
+        }
+
+        app.selectDriver = (type) => {
+            if (type === (localStorage.getItem('driverType') ?? 'ble')) return;
+            if (driver.device) driver.disconnect().catch(() => {});
+            localStorage.setItem('driverType', type);
+            driver = type === 'ethernet' ? new EthernetDriver() : new BleDriver();
+            app.driver = driver;
+            app.setupBindings();
+            _updateDriverUI(type);
+            if (type === 'ethernet') {
+                const saved = localStorage.getItem('ethernetReaderIp');
+                if (saved) { const el = document.getElementById('ethernetIpInput'); if (el) el.value = saved; }
+            }
+        };
+
         // Global bridge for inline HTML onclicks
         app.handleConnectionBtn = async () => {
-            if (driver.device && driver.device.gatt.connected) {
+            const driverType = localStorage.getItem('driverType') ?? 'ble';
+            const isConnected = driverType === 'ethernet' ? !!driver.device : (driver.device && driver.device.gatt && driver.device.gatt.connected);
+            if (isConnected) {
                 await driver.disconnect();
+            } else if (driverType === 'ethernet') {
+                const ip = (document.getElementById('ethernetIpInput')?.value || '').trim();
+                driver.connect(ip || null).catch(e => app.sysLog(`Connect failed: ${e.message}`, true));
             } else {
                 const ok = await driver.tryAutoConnect();
                 if (!ok) driver.connect().catch(e => app.sysLog(`Connect failed: ${e.message}`, true));
@@ -266,6 +325,13 @@
             const forgetBtn = document.getElementById('forgetDeviceBtn');
             if (forgetBtn) forgetBtn.style.display = 'none';
             app.sysLog('SYSTEM: Saved device forgotten — next connect will use the device picker.');
+        };
+
+        app.forgetEthernetIp = () => {
+            localStorage.removeItem('ethernetReaderIp');
+            const el = document.getElementById('ethernetIpInput');
+            if (el) el.value = '';
+            app.sysLog('SYSTEM: Saved reader IP forgotten.');
         };
 
         app.saveMapping = async (e) => {
